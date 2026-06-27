@@ -77,13 +77,17 @@ class Uploader:
         return upload_url, video_id, None
 
     def _transfer_file(self, upload_url: str, page_token: str,
-                       video: Path, on_log=None) -> tuple[bool, str | None]:
-        """Envoie le fichier par tranches via PUT."""
+                       video: Path, on_log=None) -> tuple[bool, str | None, str | None]:
+        """Envoie le fichier par tranches via PUT.
+
+        Retourne (ok, error, video_id_from_transfer).
+        Le video_id peut être renvoyé par l'API dans la dernière réponse.
+        """
         size = video.stat().st_size
         mb_total = size / 1_048_576
         offset = 0
+        last_video_id = None
 
-        # upload_url peut être relatif (session ID) ou absolu
         if not upload_url.startswith("http"):
             upload_url = f"{cfg.GRAPH_BASE}/{upload_url}"
 
@@ -103,10 +107,18 @@ class Uploader:
                     resp = requests.put(upload_url, headers=headers,
                                         data=chunk, timeout=300)
                 except Exception as e:
-                    return False, str(e)
+                    return False, str(e), None
 
                 if resp.status_code not in (200, 201, 206):
-                    return False, self._http_error(resp)
+                    return False, self._http_error(resp), None
+
+                # Certaines réponses (dernière tranche) contiennent le video_id
+                try:
+                    body = resp.json()
+                    if body.get("video_id"):
+                        last_video_id = body["video_id"]
+                except Exception:
+                    pass
 
                 offset += len(chunk)
                 pct = int(offset / size * 100)
@@ -114,7 +126,7 @@ class Uploader:
                 if on_log:
                     on_log(f"  ↑ Upload [{bar}] {pct}%  "
                            f"({offset/1_048_576:.0f}/{mb_total:.0f} Mo)")
-        return True, None
+        return True, None, last_video_id
 
     def _finish_upload(self, page_token: str, page_id: str,
                        video_id: str, caption: str) -> tuple[bool, str | None]:
@@ -154,13 +166,19 @@ class Uploader:
         if err:
             return False, err
 
-        ok, err = self._transfer_file(upload_url, page_token, video, on_log=on_log)
+        ok, err, transfer_video_id = self._transfer_file(
+            upload_url, page_token, video, on_log=on_log)
         if not ok:
             return False, err or "Transfert fichier échoué"
 
+        # Le video_id peut venir de l'init OU de la dernière réponse du transfer
+        final_video_id = video_id or transfer_video_id
+        if not final_video_id:
+            return False, "video_id introuvable dans la réponse Facebook."
+
         if on_log:
             on_log("  Finalisation de la publication…")
-        return self._finish_upload(page_token, page_id, video_id, caption)
+        return self._finish_upload(page_token, page_id, final_video_id, caption)
 
     # ── Point d'entrée ──────────────────────────────────────────────────
 

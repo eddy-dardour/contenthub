@@ -12,7 +12,7 @@ GRAPH_BASE = "https://graph.facebook.com/v19.0"
 DIALOG_URL = "https://www.facebook.com/v19.0/dialog/oauth"
 TOKEN_URL   = f"{GRAPH_BASE}/oauth/access_token"
 
-# Scopes nécessaires : publier des vidéos/Reels sur une Page
+# Scopes nécessaires pour uploader des vidéos/Reels sur une Page Facebook.
 SCOPES = "pages_show_list,pages_read_engagement,pages_manage_posts,publish_video"
 
 DEFAULT_REDIRECT_URI = "http://localhost:8724/callback"

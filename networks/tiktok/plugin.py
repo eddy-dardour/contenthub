@@ -34,15 +34,19 @@ class TikTokNetwork(NetworkPlugin):
     }
 
     def _evaluate_state(self, config: dict) -> NetworkState:
-        # Toujours utilisable grâce aux clés sandbox ; jamais bloqué en Standby.
-        return NetworkState.CONFIGURED
+        if cfg.simulate(config):
+            return NetworkState.CONFIGURED
+        if config.get("client_key") and config.get("client_secret"):
+            return NetworkState.CONFIGURED
+        return NetworkState.STANDBY
 
     def status_note(self, state: NetworkState) -> str:
         config = self.load_config()
         if cfg.simulate(config):
             return "Mode simulation (démo hors-ligne, aucun appel TikTok)."
-        if cfg.is_sandbox(config):
-            return "Clés sandbox : publication privée/brouillon, sans audit."
+        if state == NetworkState.STANDBY:
+            return ("En attente de vos clés TikTok (Client Key + Client Secret). "
+                    "Obtenez-les sur developers.tiktok.com → Mes apps.")
         return "Clés personnelles configurées. Prêt à publier."
 
     # ── Liaison de compte ───────────────────────────────────────────────

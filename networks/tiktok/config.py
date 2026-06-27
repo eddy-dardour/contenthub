@@ -1,19 +1,21 @@
-"""Configuration TikTok : clés sandbox par défaut + résolution des options.
+"""Configuration TikTok : résolution des options de publication.
 
-Si l'utilisateur n'a pas saisi ses propres clés (réseau en Standby), on retombe
-sur les identifiants SANDBOX fournis → l'app est démontrable immédiatement
-(comptes testeurs, publication privée), sans audit TikTok.
+Les clés officielles (Client Key / Secret) sont saisies par l'utilisateur dans
+la configuration du réseau. Tant qu'elles ne sont pas renseignées, le réseau
+reste en mode STANDBY (affichage seul, aucune publication).
 
 Un mode SIMULATION (publication factice) permet de tester toute la plateforme
-sans aucun appel réseau — pratique pour enregistrer la vidéo de démonstration.
+sans aucun appel réseau.
 """
 
 from __future__ import annotations
 
-# ── Clés SANDBOX (démo/audit TikTok). Remplaçables par les clés de l'utilisateur
-#    via la configuration du réseau dans l'UI. ────────────────────────────────
-SANDBOX_CLIENT_KEY = "sbawdcq6su56fu6l39"
-SANDBOX_CLIENT_SECRET = "su3YRkJ4ax9neSg5cnR5TijU0zdBXDEC"
+import os
+
+# Pas de clés hardcodées — TikTok requiert des clés personnelles (pas de sandbox partagée).
+# L'utilisateur renseigne client_key / client_secret dans l'onglet Réseaux → Configuration.
+SANDBOX_CLIENT_KEY    = os.getenv("TIKTOK_SANDBOX_KEY", "")
+SANDBOX_CLIENT_SECRET = os.getenv("TIKTOK_SANDBOX_SECRET", "")
 
 DEFAULT_REDIRECT_URI = "http://localhost:8723/callback"
 DEFAULT_PRIVACY_LEVEL = "SELF_ONLY"
