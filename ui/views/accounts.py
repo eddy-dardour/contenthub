@@ -5,8 +5,9 @@ from __future__ import annotations
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
-    QDoubleSpinBox, QAbstractItemView,
+    QAbstractItemView,
 )
+from PySide6.QtCore import QTimer
 from PySide6.QtGui import QColor
 
 from core.registry import get_plugins, get_plugin
@@ -48,6 +49,10 @@ class AccountsView(QWidget):
         self.on_changed = on_changed
         self._link_worker = None
 
+        self._cooldown_timer = QTimer(self)
+        self._cooldown_timer.timeout.connect(self._refresh_cooldown_column)
+        self._cooldown_timer.start(60_000)
+
         root = QVBoxLayout(self)
         root.setContentsMargins(28, 24, 28, 24)
         root.setSpacing(16)
@@ -72,32 +77,27 @@ class AccountsView(QWidget):
         self.name_edit = QLineEdit()
         self.name_edit.setPlaceholderText("Nom du compte (ex: compte_us_01)")
 
-        self.cooldown = QDoubleSpinBox()
-        self.cooldown.setRange(0, 72)
-        self.cooldown.setValue(8)
-        self.cooldown.setSuffix(" h cooldown")
-        self.cooldown.setFixedWidth(130)
-
         add_btn = QPushButton("Ajouter le compte")
         add_btn.setObjectName("Primary")
         add_btn.clicked.connect(self._add)
 
         bar.addWidget(self.net_select)
         bar.addWidget(self.name_edit, 1)
-        bar.addWidget(self.cooldown)
         bar.addWidget(add_btn)
         add.body.addLayout(bar)
         root.addWidget(add)
 
         # ── Tableau ──────────────────────────────────────────────────────
-        self.table = QTableWidget(0, 7)
+        self.table = QTableWidget(0, 8)
         self.table.setHorizontalHeaderLabels(
-            ["Réseau", "Compte", "Handle", "Lié", "Actif", "Type de contenu", "Actions"])
+            ["Réseau", "Compte", "Handle", "Lié", "Actif", "Type de contenu", "Disponible", "Actions"])
         hh = self.table.horizontalHeader()
         hh.setSectionResizeMode(QHeaderView.ResizeToContents)
         hh.setSectionResizeMode(1, QHeaderView.Stretch)
         hh.setSectionResizeMode(5, QHeaderView.Fixed)
         self.table.setColumnWidth(5, 200)
+        hh.setSectionResizeMode(6, QHeaderView.Fixed)
+        self.table.setColumnWidth(6, 110)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.table.setSelectionMode(QAbstractItemView.NoSelection)
         self.table.verticalHeader().setVisible(False)
@@ -117,7 +117,7 @@ class AccountsView(QWidget):
         if not name:
             QMessageBox.warning(self, "Nom requis", "Saisissez un nom de compte.")
             return
-        acc_id = self.repo.add(net_id, name, cooldown_hours=self.cooldown.value())
+        acc_id = self.repo.add(net_id, name, cooldown_hours=8.0)
         if acc_id is None:
             QMessageBox.warning(self, "Doublon",
                                 f"Le compte « {name} » existe déjà sur ce réseau.")
@@ -175,6 +175,28 @@ class AccountsView(QWidget):
 
     # ── Rendu ───────────────────────────────────────────────────────────
 
+    def _refresh_cooldown_column(self):
+        plugins = get_plugins()
+        rows = []
+        for p in plugins.values():
+            for a in p.list_accounts():
+                rows.append(a)
+        for r, a in enumerate(rows):
+            if r >= self.table.rowCount():
+                break
+            remaining = self.repo.remaining_cooldown(a.id)
+            if remaining <= 0:
+                text, color = "✔ Disponible", theme.OK
+            else:
+                h, s = divmod(remaining, 3600)
+                m = s // 60
+                text = f"⏳ {h}h{m:02d}" if h else f"⏳ {m}min"
+                color = theme.WARN
+            item = self.table.item(r, 6)
+            if item:
+                item.setText(text)
+                item.setForeground(QColor(color))
+
     def refresh(self):
         plugins = get_plugins()
         rows = []
@@ -214,7 +236,20 @@ class AccountsView(QWidget):
             self.table.setItem(r, 4, act)
 
             self.table.setCellWidget(r, 5, self._content_type_cell(p, a))
-            self.table.setCellWidget(r, 6, self._actions_cell(p, a, linked, needs_reauth))
+
+            remaining = self.repo.remaining_cooldown(a.id)
+            if remaining <= 0:
+                avail_text, avail_color = "✔ Disponible", theme.OK
+            else:
+                h, s = divmod(remaining, 3600)
+                m = s // 60
+                avail_text = f"⏳ {h}h{m:02d}" if h else f"⏳ {m}min"
+                avail_color = theme.WARN
+            avail_item = QTableWidgetItem(avail_text)
+            avail_item.setForeground(QColor(avail_color))
+            self.table.setItem(r, 6, avail_item)
+
+            self.table.setCellWidget(r, 7, self._actions_cell(p, a, linked, needs_reauth))
 
         # Ré-authentification automatique : si un compte a été marqué (token
         # révoqué pendant une routine), propose de relancer l'OAuth tout de suite.
