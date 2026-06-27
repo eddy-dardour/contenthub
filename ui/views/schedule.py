@@ -1,25 +1,20 @@
 """Vue Catalogue & Publication.
 
-Catalogue modulaire de types de contenu (cf. core.catalog).
-Pour chaque type :
-  - ses plateformes épinglées et un aperçu (combien de comptes → combien de vidéos)
-  - bouton « Générer » : génère les vidéos sans publier
-  - bouton « Distribuer » : publie le contenu déjà généré vers les comptes compatibles
-  - bouton « Générer & Distribuer » : pipeline complet (campagne)
-  - planification quotidienne par type
-
-La vue est entièrement scrollable : les cartes grandissent librement.
+Une carte par type de contenu (actuellement : TTS Drama uniquement).
+En dessous : liste des vidéos générées disponibles dans output/videos/.
 """
 
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, QTime
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QTimeEdit,
     QTextEdit, QProgressBar, QFrame, QScrollArea, QSizePolicy,
+    QListWidget, QListWidgetItem, QAbstractItemView,
 )
 
-from core import catalog
+from core import catalog, content as content_mod
 from core.catalog import ContentType
 from core.campaign import plan
 from core.registry import get_plugins
@@ -30,37 +25,29 @@ from .. import theme, widgets, brand
 
 _GENERATE_STYLE = (
     f"QPushButton {{ background:{theme.SURFACE_2}; border:1px solid {theme.ACCENT}; "
-    f"border-radius:8px; padding:9px 18px; color:{theme.ACCENT}; font-weight:600; font-size:13px; }}"
+    f"border-radius:8px; padding:10px 20px; color:{theme.ACCENT}; font-weight:600; font-size:13px; }}"
     f"QPushButton:hover {{ background:{theme.ACCENT}; color:#0b0d12; }}"
     f"QPushButton:disabled {{ border-color:{theme.BORDER}; color:{theme.TEXT_FAINT}; background:{theme.SURFACE_2}; }}"
 )
-
 _DISTRIBUTE_STYLE = (
     f"QPushButton {{ background:{theme.SURFACE_2}; border:1px solid {theme.OK}; "
-    f"border-radius:8px; padding:9px 18px; color:{theme.OK}; font-weight:600; font-size:13px; }}"
+    f"border-radius:8px; padding:10px 20px; color:{theme.OK}; font-weight:600; font-size:13px; }}"
     f"QPushButton:hover {{ background:{theme.OK}; color:#0b0d12; }}"
     f"QPushButton:disabled {{ border-color:{theme.BORDER}; color:{theme.TEXT_FAINT}; background:{theme.SURFACE_2}; }}"
 )
-
 _CAMPAIGN_STYLE = (
     f"QPushButton {{ background:{theme.ACCENT}; border:none; "
-    f"border-radius:8px; padding:9px 18px; color:#0b0d12; font-weight:700; font-size:13px; }}"
+    f"border-radius:8px; padding:10px 20px; color:#0b0d12; font-weight:700; font-size:13px; }}"
     f"QPushButton:hover {{ background:{theme.ACCENT_HOVER}; }}"
     f"QPushButton:disabled {{ background:{theme.SURFACE_2}; color:{theme.TEXT_FAINT}; }}"
 )
 
-_COMING_STYLE = (
-    f"QPushButton {{ background:{theme.SURFACE_2}; border:1px solid {theme.BORDER}; "
-    f"border-radius:8px; padding:9px 18px; color:{theme.TEXT_FAINT}; font-size:13px; }}"
-    f"QPushButton:disabled {{ color:{theme.TEXT_FAINT}; }}"
-)
-
 
 class ContentTypeCard(widgets.Card):
-    """Carte d'un type de contenu du catalogue — pleine largeur, bien aérée."""
+    """Carte d'un type de contenu — pleine largeur."""
 
-    def __init__(self, content_type: ContentType, on_generate, on_distribute, on_campaign,
-                 on_toggle_schedule):
+    def __init__(self, content_type: ContentType,
+                 on_generate, on_distribute, on_campaign, on_toggle_schedule):
         super().__init__()
         self.ct = content_type
         self._on_generate = on_generate
@@ -69,39 +56,30 @@ class ContentTypeCard(widgets.Card):
         self._on_toggle_schedule = on_toggle_schedule
         self._scheduled = False
 
-        # Indique si ce type est « bientôt disponible » (générateur non implémenté)
-        self._coming_soon = content_type.generator_kind not in ("manual",)
-
         self.body.setSpacing(14)
-        self.body.setContentsMargins(20, 18, 20, 18)
+        self.body.setContentsMargins(22, 20, 22, 20)
 
         # ── En-tête ─────────────────────────────────────────────────────
         head = QHBoxLayout()
-        head.setSpacing(14)
+        head.setSpacing(16)
 
         icon_lbl = QLabel(content_type.icon)
-        icon_lbl.setStyleSheet("font-size:32px; padding:4px;")
-        icon_lbl.setFixedWidth(48)
+        icon_lbl.setStyleSheet("font-size:36px;")
+        icon_lbl.setFixedWidth(52)
         head.addWidget(icon_lbl)
 
-        title_box = QVBoxLayout()
-        title_box.setSpacing(4)
-        title_lbl = widgets.title(content_type.label, "H2")
-        title_lbl.setStyleSheet(f"font-size:17px; font-weight:700;")
-        title_box.addWidget(title_lbl)
-        desc_lbl = widgets.dim(content_type.description)
+        info_box = QVBoxLayout()
+        info_box.setSpacing(4)
+        title_lbl = QLabel(content_type.label)
+        title_lbl.setStyleSheet(f"font-size:18px; font-weight:700; color:{theme.TEXT};")
+        info_box.addWidget(title_lbl)
+        desc_lbl = QLabel(content_type.description)
+        desc_lbl.setStyleSheet(f"color:{theme.TEXT_DIM}; font-size:13px;")
         desc_lbl.setWordWrap(True)
-        title_box.addWidget(desc_lbl)
-        head.addLayout(title_box, 1)
+        info_box.addWidget(desc_lbl)
+        head.addLayout(info_box, 1)
 
-        if self._coming_soon:
-            badge = QLabel("Bientôt")
-            badge.setStyleSheet(
-                f"background:{theme.WARN}22; color:{theme.WARN}; border:1px solid {theme.WARN}; "
-                f"border-radius:6px; padding:3px 10px; font-size:11px; font-weight:600;")
-            head.addWidget(badge, alignment=Qt.AlignTop)
-
-        # Logos des plateformes épinglées
+        # Logos plateformes
         logo_box = QHBoxLayout()
         logo_box.setSpacing(8)
         plugins = get_plugins()
@@ -110,8 +88,8 @@ class ContentTypeCard(widgets.Card):
             if not p:
                 continue
             logo = QLabel()
-            logo.setPixmap(brand.pixmap(p.icon, 26))
-            logo.setFixedSize(26, 26)
+            logo.setPixmap(brand.pixmap(p.icon, 28))
+            logo.setFixedSize(28, 28)
             logo.setScaledContents(True)
             logo.setToolTip(p.display_name)
             logo_box.addWidget(logo)
@@ -134,37 +112,28 @@ class ContentTypeCard(widgets.Card):
         btn_row = QHBoxLayout()
         btn_row.setSpacing(10)
 
-        if self._coming_soon:
-            placeholder = QPushButton("Génération bientôt disponible")
-            placeholder.setStyleSheet(_COMING_STYLE)
-            placeholder.setEnabled(False)
-            btn_row.addWidget(placeholder)
-            btn_row.addStretch(1)
-            self.gen_btn = self.dist_btn = self.campaign_btn = None
-        else:
-            self.gen_btn = QPushButton("⬇  Générer")
-            self.gen_btn.setStyleSheet(_GENERATE_STYLE)
-            self.gen_btn.setMinimumWidth(140)
-            self.gen_btn.setToolTip("Génère les vidéos dans output/videos/ sans publier.")
-            self.gen_btn.clicked.connect(lambda: self._on_generate(self.ct))
-            btn_row.addWidget(self.gen_btn)
+        self.gen_btn = QPushButton("⬇  Générer")
+        self.gen_btn.setStyleSheet(_GENERATE_STYLE)
+        self.gen_btn.setMinimumWidth(140)
+        self.gen_btn.setToolTip("Génère les vidéos (sans les publier).")
+        self.gen_btn.clicked.connect(lambda: self._on_generate(self.ct))
+        btn_row.addWidget(self.gen_btn)
 
-            self.dist_btn = QPushButton("↑  Distribuer")
-            self.dist_btn.setStyleSheet(_DISTRIBUTE_STYLE)
-            self.dist_btn.setMinimumWidth(140)
-            self.dist_btn.setToolTip("Publie le contenu déjà généré vers les comptes compatibles.")
-            self.dist_btn.clicked.connect(lambda: self._on_distribute(self.ct))
-            btn_row.addWidget(self.dist_btn)
+        self.dist_btn = QPushButton("↑  Distribuer")
+        self.dist_btn.setStyleSheet(_DISTRIBUTE_STYLE)
+        self.dist_btn.setMinimumWidth(140)
+        self.dist_btn.setToolTip("Publie les vidéos déjà générées.")
+        self.dist_btn.clicked.connect(lambda: self._on_distribute(self.ct))
+        btn_row.addWidget(self.dist_btn)
 
-            self.campaign_btn = QPushButton("⚡  Générer & Distribuer")
-            self.campaign_btn.setStyleSheet(_CAMPAIGN_STYLE)
-            self.campaign_btn.setMinimumWidth(190)
-            self.campaign_btn.setToolTip("Pipeline complet : génère puis publie immédiatement.")
-            self.campaign_btn.clicked.connect(lambda: self._on_campaign(self.ct))
-            btn_row.addWidget(self.campaign_btn)
+        self.campaign_btn = QPushButton("⚡  Générer & Distribuer")
+        self.campaign_btn.setStyleSheet(_CAMPAIGN_STYLE)
+        self.campaign_btn.setMinimumWidth(200)
+        self.campaign_btn.setToolTip("Pipeline complet : génère puis publie immédiatement.")
+        self.campaign_btn.clicked.connect(lambda: self._on_campaign(self.ct))
+        btn_row.addWidget(self.campaign_btn)
 
-            btn_row.addStretch(1)
-
+        btn_row.addStretch(1)
         self.body.addLayout(btn_row)
 
         # ── Planification ─────────────────────────────────────────────────
@@ -179,28 +148,21 @@ class ContentTypeCard(widgets.Card):
         sched_row.addWidget(self.sched_time)
         self.sched_btn = QPushButton("Planifier")
         self.sched_btn.setFixedWidth(110)
-        if self._coming_soon:
-            self.sched_btn.setEnabled(False)
-        else:
-            self.sched_btn.clicked.connect(self._toggle_schedule)
+        self.sched_btn.clicked.connect(self._toggle_schedule)
         sched_row.addWidget(self.sched_btn)
         sched_row.addStretch(1)
         self.body.addLayout(sched_row)
 
-        self.refresh()
+        self.refresh_plan()
 
-    def refresh(self):
-        if self._coming_soon:
-            self.plan_lbl.setText("Ce type de contenu sera disponible dans une prochaine mise à jour.")
-            return
+    def refresh_plan(self):
         preview = plan(self.ct)
         if not preview:
-            self.plan_lbl.setText("⚠  Aucun compte lié+actif sur les plateformes épinglées.")
-            self.gen_btn.setEnabled(True)
+            self.plan_lbl.setText(
+                "⚠  Aucun compte lié+actif sur les plateformes épinglées.")
             self.dist_btn.setEnabled(False)
             self.campaign_btn.setEnabled(False)
             return
-        self.gen_btn.setEnabled(True)
         self.dist_btn.setEnabled(True)
         self.campaign_btn.setEnabled(True)
         plugins = get_plugins()
@@ -213,19 +175,14 @@ class ContentTypeCard(widgets.Card):
         self.plan_lbl.setText(
             "  ·  ".join(parts) + f"   →   {total} vidéo(s) à générer")
 
-    def set_running(self, label: str | None):
-        if self._coming_soon or not self.gen_btn:
-            return
-        running = label is not None
+    def set_running(self, running: bool):
         self.gen_btn.setEnabled(not running)
         self.dist_btn.setEnabled(not running)
         self.campaign_btn.setEnabled(not running)
-        if running:
-            self.campaign_btn.setText("En cours…")
-        else:
+        self.campaign_btn.setText("En cours…" if running else "⚡  Générer & Distribuer")
+        if not running:
             self.gen_btn.setText("⬇  Générer")
             self.dist_btn.setText("↑  Distribuer")
-            self.campaign_btn.setText("⚡  Générer & Distribuer")
 
     def _toggle_schedule(self):
         self._scheduled = not self._scheduled
@@ -234,6 +191,85 @@ class ContentTypeCard(widgets.Card):
         self.sched_btn.setText("Annuler" if self._scheduled else "Planifier")
         self.sched_btn.setStyleSheet(
             f"QPushButton {{ color:{theme.ERR}; }}" if self._scheduled else "")
+
+
+class VideoListCard(widgets.Card):
+    """Carte listant les vidéos disponibles dans output/videos/."""
+
+    def __init__(self):
+        super().__init__()
+        self.body.setSpacing(10)
+        self.body.setContentsMargins(22, 18, 22, 18)
+
+        # En-tête
+        head = QHBoxLayout()
+        head.addWidget(widgets.title("Vidéos disponibles", "H2"))
+        head.addStretch(1)
+        self._count_lbl = QLabel("")
+        self._count_lbl.setStyleSheet(
+            f"color:{theme.TEXT_DIM}; font-size:12px; background:{theme.SURFACE_2}; "
+            f"border:1px solid {theme.BORDER}; border-radius:8px; padding:3px 10px;")
+        head.addWidget(self._count_lbl)
+        self.refresh_btn = QPushButton("↻ Rafraîchir")
+        self.refresh_btn.setFixedWidth(100)
+        self.refresh_btn.setStyleSheet(
+            f"QPushButton {{ background:{theme.SURFACE_2}; border:1px solid {theme.BORDER}; "
+            f"border-radius:6px; padding:4px 10px; color:{theme.TEXT_DIM}; font-size:12px; }}"
+            f"QPushButton:hover {{ border-color:{theme.ACCENT}; color:{theme.ACCENT}; }}")
+        head.addWidget(self.refresh_btn)
+        self.body.addLayout(head)
+
+        sep = QFrame()
+        sep.setFrameShape(QFrame.HLine)
+        sep.setStyleSheet(f"color:{theme.BORDER};")
+        self.body.addWidget(sep)
+
+        self._list = QListWidget()
+        self._list.setSelectionMode(QAbstractItemView.NoSelection)
+        self._list.setStyleSheet(
+            f"QListWidget {{ background:{theme.SURFACE}; border:none; "
+            f"border-radius:8px; padding:4px; }}"
+            f"QListWidget::item {{ padding:8px 12px; border-bottom:1px solid {theme.BORDER}; "
+            f"color:{theme.TEXT}; }}"
+            f"QListWidget::item:last {{ border-bottom:none; }}")
+        self._list.setMinimumHeight(140)
+        self._list.setMaximumHeight(320)
+        self.body.addWidget(self._list)
+
+        self._empty_lbl = QLabel(
+            "Aucune vidéo disponible.\nCliquez sur « Générer » pour en créer.")
+        self._empty_lbl.setAlignment(Qt.AlignCenter)
+        self._empty_lbl.setStyleSheet(
+            f"color:{theme.TEXT_FAINT}; font-size:13px; padding:24px;")
+        self._empty_lbl.setVisible(False)
+        self.body.addWidget(self._empty_lbl)
+
+        self.refresh_btn.clicked.connect(self.refresh)
+        self.refresh()
+
+    def refresh(self):
+        self._list.clear()
+        items = content_mod.list_content()
+        if not items:
+            self._list.setVisible(False)
+            self._empty_lbl.setVisible(True)
+            self._count_lbl.setText("0 vidéo")
+            return
+
+        self._list.setVisible(True)
+        self._empty_lbl.setVisible(False)
+        self._count_lbl.setText(
+            f"{len(items)} vidéo{'s' if len(items) > 1 else ''}")
+
+        for item in items:
+            size_mb = item.size_bytes / 1_048_576
+            caption_short = (item.caption or "")[:60] + (
+                "…" if len(item.caption or "") > 60 else "")
+            line = QListWidgetItem(
+                f"🎬  {item.key}   •   {size_mb:.1f} Mo   •   {caption_short}")
+            line.setToolTip(item.caption or "")
+            line.setForeground(QColor(theme.TEXT))
+            self._list.addItem(line)
 
 
 class ScheduleView(QWidget):
@@ -245,28 +281,26 @@ class ScheduleView(QWidget):
         self._schedulers: dict[str, DailyScheduler] = {}
         self._cards: list[ContentTypeCard] = []
 
-        # Layout racine : header fixe + zone scrollable + console fixe en bas
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
-        # ── Header ───────────────────────────────────────────────────────
+        # ── Header fixe ──────────────────────────────────────────────────
         header = QWidget()
         header.setStyleSheet(f"background:{theme.BG};")
         hlay = QVBoxLayout(header)
-        hlay.setContentsMargins(28, 24, 28, 12)
+        hlay.setContentsMargins(28, 24, 28, 10)
         hlay.setSpacing(4)
         hlay.addWidget(widgets.title("Catalogue de contenu"))
         hlay.addWidget(widgets.dim(
-            "Générez du contenu, distribuez l'existant, ou lancez les deux à la suite. "
-            "Faites défiler pour voir tous les types disponibles."))
+            "Générez du contenu, distribuez l'existant, ou lancez les deux en une fois."))
 
         ctrl_row = QHBoxLayout()
         ctrl_row.setSpacing(10)
         self.progress = QProgressBar()
         self.progress.setRange(0, 0)
         self.progress.setVisible(False)
-        self.progress.setFixedHeight(6)
+        self.progress.setFixedHeight(5)
         ctrl_row.addWidget(self.progress, 1)
         self.stop_btn = QPushButton("⏹  Arrêter")
         self.stop_btn.setObjectName("Danger")
@@ -277,7 +311,7 @@ class ScheduleView(QWidget):
         hlay.addLayout(ctrl_row)
         root.addWidget(header)
 
-        # ── Zone scrollable : cartes en colonne ──────────────────────────
+        # ── Zone scrollable ───────────────────────────────────────────────
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
@@ -291,40 +325,6 @@ class ScheduleView(QWidget):
         cards_lay.setContentsMargins(28, 8, 28, 20)
         cards_lay.setSpacing(16)
 
-        self._build_cards(cards_lay)
-        cards_lay.addStretch(1)
-        scroll.setWidget(cards_host)
-        root.addWidget(scroll, 1)
-
-        # ── Console live (fixe en bas) ───────────────────────────────────
-        log_card = widgets.Card()
-        log_card.setMaximumHeight(220)
-        log_card.body.setContentsMargins(16, 12, 16, 12)
-        log_card.body.setSpacing(8)
-
-        log_head = QHBoxLayout()
-        log_head.addWidget(widgets.title("Activité", "H2"))
-        log_head.addStretch(1)
-        clear_btn = QPushButton("Effacer")
-        clear_btn.setFixedWidth(72)
-        clear_btn.clicked.connect(lambda: self.console.clear())
-        log_head.addWidget(clear_btn)
-        log_card.body.addLayout(log_head)
-
-        self.console = QTextEdit()
-        self.console.setReadOnly(True)
-        self.console.setStyleSheet(
-            f"background:{theme.SURFACE}; border:none; font-family:monospace; font-size:12px;")
-        log_card.body.addWidget(self.console)
-
-        console_wrapper = QWidget()
-        console_wrapper.setStyleSheet(f"background:{theme.BG};")
-        cw_lay = QVBoxLayout(console_wrapper)
-        cw_lay.setContentsMargins(28, 0, 28, 20)
-        cw_lay.addWidget(log_card)
-        root.addWidget(console_wrapper)
-
-    def _build_cards(self, layout: QVBoxLayout):
         for ct in catalog.list_types():
             card = ContentTypeCard(
                 ct,
@@ -334,13 +334,51 @@ class ScheduleView(QWidget):
                 on_toggle_schedule=self._toggle_schedule,
             )
             self._cards.append(card)
-            layout.addWidget(card)
+            cards_lay.addWidget(card)
+
+        # Carte vidéos disponibles
+        self._video_list_card = VideoListCard()
+        cards_lay.addWidget(self._video_list_card)
+        cards_lay.addStretch(1)
+
+        scroll.setWidget(cards_host)
+        root.addWidget(scroll, 1)
+
+        # ── Console fixe en bas ───────────────────────────────────────────
+        log_wrap = QWidget()
+        log_wrap.setStyleSheet(f"background:{theme.BG};")
+        lw_lay = QVBoxLayout(log_wrap)
+        lw_lay.setContentsMargins(28, 0, 28, 20)
+
+        log_card = widgets.Card()
+        log_card.setMaximumHeight(200)
+        log_card.body.setContentsMargins(16, 12, 16, 12)
+        log_card.body.setSpacing(8)
+
+        log_head = QHBoxLayout()
+        log_head.addWidget(widgets.title("Activité", "H2"))
+        log_head.addStretch(1)
+        clear_btn = QPushButton("Effacer")
+        clear_btn.setFixedWidth(70)
+        clear_btn.clicked.connect(lambda: self.console.clear())
+        log_head.addWidget(clear_btn)
+        log_card.body.addLayout(log_head)
+
+        self.console = QTextEdit()
+        self.console.setReadOnly(True)
+        self.console.setStyleSheet(
+            f"background:{theme.SURFACE}; border:none; "
+            f"font-family:monospace; font-size:12px;")
+        log_card.body.addWidget(self.console)
+        lw_lay.addWidget(log_card)
+        root.addWidget(log_wrap)
 
     def refresh(self):
         for card in self._cards:
-            card.refresh()
+            card.refresh_plan()
+        self._video_list_card.refresh()
 
-    # ── Logique ─────────────────────────────────────────────────────────
+    # ── Guards & helpers ─────────────────────────────────────────────────
 
     def _is_busy(self) -> bool:
         return (
@@ -354,10 +392,9 @@ class ScheduleView(QWidget):
         self.console.verticalScrollBar().setValue(
             self.console.verticalScrollBar().maximum())
 
-    def _set_running(self, label: str | None):
-        running = label is not None
+    def _set_running(self, running: bool):
         for c in self._cards:
-            c.set_running(label)
+            c.set_running(running)
         self.progress.setVisible(running)
         self.stop_btn.setVisible(running)
 
@@ -378,22 +415,18 @@ class ScheduleView(QWidget):
             return
         from core.campaign import plan as make_plan
         preview = make_plan(content_type)
-        n = sum(preview.values()) if preview else 1
+        n = max(sum(preview.values()), 1) if preview else 1
         self._log(f"⬇ Génération de {n} vidéo(s) « {content_type.label} »…")
-        self._set_running("En cours…")
+        self._set_running(True)
         self._generate_worker = GenerateWorker(n, content_type.gen_type)
         self._generate_worker.log.connect(lambda m: self._log(f"    {m}"))
         self._generate_worker.finished_result.connect(self._on_generate_done)
         self._generate_worker.start()
 
     def _on_generate_done(self, ok: bool):
-        self._set_running(None)
-        if ok:
-            self._log("✔ Génération terminée. Contenu prêt dans output/videos/.")
-        else:
-            self._log("✖ Génération échouée ou interrompue.")
-        for c in self._cards:
-            c.refresh()
+        self._set_running(False)
+        self._log("✔ Génération terminée." if ok else "✖ Génération échouée ou interrompue.")
+        self.refresh()
 
     # ── Distribuer ───────────────────────────────────────────────────────
 
@@ -401,8 +434,8 @@ class ScheduleView(QWidget):
         if self._is_busy():
             self._log("⚠ Une opération est déjà en cours.")
             return
-        self._log(f"↑ Distribution du contenu « {content_type.label} »…")
-        self._set_running("En cours…")
+        self._log(f"↑ Distribution « {content_type.label} »…")
+        self._set_running(True)
         self._distribute_worker = DistributeWorker(
             content_type_id=content_type.id,
             network_ids=list(content_type.networks) if content_type.networks else None,
@@ -412,40 +445,36 @@ class ScheduleView(QWidget):
         self._distribute_worker.start()
 
     def _on_distribute_done(self, summary: dict):
-        self._set_running(None)
-        for c in self._cards:
-            c.refresh()
+        self._set_running(False)
+        self.refresh()
         self._log(
-            f"✔ Distribution terminée — "
-            f"{summary.get('published', 0)} publiée(s), "
+            f"✔ Distribution — {summary.get('published', 0)} publiée(s), "
             f"{summary.get('failed', 0)} échec(s), "
             f"{summary.get('skipped', 0)} ignorée(s).")
 
-    # ── Générer & Distribuer (campagne) ──────────────────────────────────
+    # ── Générer & Distribuer ─────────────────────────────────────────────
 
     def _run_campaign(self, content_type: ContentType):
         if self._is_busy():
             self._log("⚠ Une opération est déjà en cours.")
             return
-        self._log(f"⚡ Campagne « {content_type.label} » : génération + distribution…")
-        self._set_running("En cours…")
+        self._log(f"⚡ Campagne « {content_type.label} »…")
+        self._set_running(True)
         self._campaign_worker = CampaignWorker(content_type)
         self._campaign_worker.event.connect(self._on_event)
         self._campaign_worker.finished_result.connect(self._on_campaign_done)
         self._campaign_worker.start()
 
     def _on_campaign_done(self, summary: dict):
-        self._set_running(None)
-        for c in self._cards:
-            c.refresh()
+        self._set_running(False)
+        self.refresh()
         if summary.get("no_accounts"):
             self._log("⚠ Aucun compte lié+actif sur les plateformes ciblées.")
         else:
             self._log(
-                f"✔ Campagne terminée — {summary.get('generated', 0)} générée(s), "
+                f"✔ Campagne — {summary.get('generated', 0)} générée(s), "
                 f"{summary.get('published', 0)} publiée(s), "
-                f"{summary.get('failed', 0)} échec(s), "
-                f"{summary.get('skipped', 0)} ignorée(s).")
+                f"{summary.get('failed', 0)} échec(s).")
 
     # ── Événements publisher ──────────────────────────────────────────────
 
@@ -454,7 +483,7 @@ class ScheduleView(QWidget):
             "uploading": lambda d: f"  ↑ {d.get('content','')} → {d.get('account','')} ({d.get('network','')})",
             "success":   lambda d: f"  ✔ {d.get('account','')} : publié.",
             "failed":    lambda d: f"  ✖ {d.get('account','')} : {d.get('error','échec')}",
-            "cooldown":  lambda d: f"  ⏳ {d.get('account','')} en cooldown ({d.get('remaining',0)}s)…",
+            "cooldown":  lambda d: f"  ⏳ {d.get('account','')} cooldown ({d.get('remaining',0)}s)…",
             "retry":     lambda d: f"  ↻ {d.get('account','')} retry {d.get('attempt','')} dans {d.get('backoff','')}s",
             "info":      lambda d: f"  ℹ {d.get('message','')}",
             "log":       lambda d: f"    {d.get('message','')}",
@@ -463,7 +492,7 @@ class ScheduleView(QWidget):
         if fn:
             self._log(fn(data))
 
-    # ── Planification par type ────────────────────────────────────────────
+    # ── Planification ────────────────────────────────────────────────────
 
     def _toggle_schedule(self, content_type: ContentType, on: bool, hour: int, minute: int):
         existing = self._schedulers.pop(content_type.id, None)
@@ -480,7 +509,7 @@ class ScheduleView(QWidget):
         sched = DailyScheduler(hour, minute, job, on_event=self._on_sched_event)
         sched.start()
         self._schedulers[content_type.id] = sched
-        self._log(f"  « {content_type.label} » planifie chaque jour a {hour:02d}:{minute:02d}.")
+        self._log(f"  « {content_type.label} » planifié à {hour:02d}:{minute:02d} chaque jour.")
 
     def _on_sched_event(self, event: str, data: dict):
         if event == "running":

@@ -109,11 +109,12 @@ class Database:
                 conn.close()
 
     def query(self, sql: str, params: tuple = ()) -> list[dict]:
-        conn = self.connect()
-        try:
-            return [dict(r) for r in conn.execute(sql, params).fetchall()]
-        finally:
-            conn.close()
+        with self._lock:
+            conn = self.connect()
+            try:
+                return [dict(r) for r in conn.execute(sql, params).fetchall()]
+            finally:
+                conn.close()
 
     def query_one(self, sql: str, params: tuple = ()) -> dict | None:
         rows = self.query(sql, params)

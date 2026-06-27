@@ -22,8 +22,6 @@ _plugins: dict[str, NetworkPlugin] | None = None
 def _discover() -> dict[str, NetworkPlugin]:
     found: dict[str, NetworkPlugin] = {}
     for mod in pkgutil.iter_modules(networks.__path__):
-        if mod.name in ("base",) or not mod.ispkg and mod.name == "base":
-            continue
         if not mod.ispkg:
             continue
         try:
