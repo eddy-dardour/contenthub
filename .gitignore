@@ -1,0 +1,26 @@
+# Build
+dist/
+build/
+__pycache__/
+*.pyc
+*.pyo
+*.spec.bak
+
+# Données locales (DB, tokens, vidéos, logs)
+data/
+*.db
+*.log
+.env
+.env.*
+!.env.example
+
+# Modèles Whisper
+resources/models/
+
+# Dépendances lourdes embarquées
+resources/ffmpeg/
+
+# IDE
+.vscode/
+.idea/
+*.swp
