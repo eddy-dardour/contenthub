@@ -238,3 +238,16 @@ def valid_token(config: dict, credentials: dict, on_refresh=None) -> str | None:
                 on_refresh(new)
             return new["access_token"]
     return token
+
+
+def refresh_access_token(config: dict, credentials: dict, on_refresh=None) -> str | None:
+    """Force un refresh immédiat (e.g. après un 401 inattendu pendant l'upload)."""
+    rt = credentials.get("refresh_token")
+    if not rt:
+        return None
+    new = refresh(config, rt)
+    if not new:
+        return None
+    if on_refresh:
+        on_refresh(new)
+    return new["access_token"]

@@ -31,11 +31,10 @@ for src, dest in [
     if os.path.exists(p):
         datas.append((p, dest))
 
-# Logos officiels des réseaux (SVG) embarqués pour l'UI (cf. ui/brand.py, qui
-# les recherche sous _MEIPASS/ui/assets/logos en mode figé).
-_logos = os.path.join(os.getcwd(), 'ui', 'assets', 'logos')
-if os.path.exists(_logos):
-    datas.append((_logos, os.path.join('ui', 'assets', 'logos')))
+# Assets UI : logos réseaux (SVG) + icône app (SVG/PNG/ICO)
+_assets = os.path.join(os.getcwd(), 'ui', 'assets')
+if os.path.exists(_assets):
+    datas.append((_assets, os.path.join('ui', 'assets')))
 
 hiddenimports = [
     'networks.tiktok', 'networks.youtube', 'networks.facebook',
@@ -64,6 +63,10 @@ a = Analysis(
 )
 pyz = PYZ(a.pure)
 
+_icon = os.path.join(os.getcwd(), 'ui', 'assets', 'icon.ico')
+if not os.path.exists(_icon):
+    _icon = os.path.join(os.getcwd(), 'ui', 'assets', 'icon.png')
+
 exe = EXE(
     pyz,
     a.scripts,
@@ -75,6 +78,7 @@ exe = EXE(
     strip=False,
     upx=True,
     console=False,
+    icon=_icon if os.path.exists(_icon) else None,
     disable_windowed_traceback=False,
     argv_emulation=False,
     target_arch=None,

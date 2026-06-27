@@ -9,18 +9,17 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
 )
 
 from ..workers import StatsWorker
-from .. import theme, widgets, brand
-from core.registry import get_plugins
+from .. import widgets
 from core import stats as stats_mod
 
 
 COLUMNS = ["Réseau", "Compte", "Handle", "Lié", "Publiées", "Échecs",
-           "Dernière publi", "Vidéos (API)", "Vues/Abonnés", "Likes"]
+           "Dernière publi", "Vidéos (API)", "Vues", "Likes"]
 
 
 class StatsView(QWidget):
@@ -48,7 +47,7 @@ class StatsView(QWidget):
         self.m_accounts = widgets.metric("0", "Comptes")
         self.m_linked = widgets.metric("0", "Comptes liés")
         self.m_published = widgets.metric("0", "Vidéos publiées")
-        self.m_views = widgets.metric("0", "Vues/Abonnés (API)")
+        self.m_views = widgets.metric("0", "Vues (API)")
         grid = QGridLayout()
         grid.setSpacing(14)
         for i, c in enumerate((self.m_accounts, self.m_linked,

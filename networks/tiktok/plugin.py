@@ -77,6 +77,21 @@ class TikTokNetwork(NetworkPlugin):
         if not token:
             return PublishResult(
                 False, f"Compte « {account.name} » non lié ou token expiré.")
+        if oauth.needs_reauth(token):
+            # Token expiré et refresh impossible — tente une ré-authentification automatique
+            if on_log:
+                on_log(f"[{account.name}] Token expiré. Ré-authentification automatique…")
+            reauth_result = self.link_account(account, on_log=on_log)
+            if not reauth_result.success:
+                return PublishResult(
+                    False, f"Ré-auth échouée pour « {account.name} » : {reauth_result.detail}")
+            # Recharge les credentials frais
+            fresh = self.accounts.get(account.id)
+            if not fresh:
+                return PublishResult(False, "Compte introuvable après ré-auth.")
+            token = oauth.valid_token(config, fresh.credentials, on_refresh=persist_refresh)
+            if not token or oauth.needs_reauth(token):
+                return PublishResult(False, "Token invalide après ré-auth.")
 
         up = Uploader(config, account_name=account.name)
         ok, detail = up.upload(token, content.path, content.caption, on_log=on_log)
@@ -96,6 +111,8 @@ class TikTokNetwork(NetworkPlugin):
         token = oauth.valid_token(
             config, account.credentials,
             on_refresh=lambda t: self.accounts.update_credentials(account.id, t))
+        if oauth.needs_reauth(token):
+            return None
         if not token:
             return None
         try:

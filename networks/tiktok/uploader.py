@@ -9,6 +9,7 @@ En mode SIMULATION, la vidéo est copiée dans contenthub_data/simulated_posts/.
 from __future__ import annotations
 
 import math
+import random
 import time
 import shutil
 import logging
@@ -90,6 +91,9 @@ class Uploader:
                                  idx, resp.status_code, resp.text[:200])
                     return False
                 offset += len(chunk)
+                # Micro-pause inter-chunk : simule une connexion réseau réelle (jitter naturel).
+                if idx < count - 1:
+                    time.sleep(random.uniform(0.1, 0.6))
         return True
 
     def _wait(self, token: str, publish_id: str, timeout_s: int = 300, on_log=None) -> bool:
@@ -128,8 +132,14 @@ class Uploader:
         privacy = self._resolve_privacy(token)
         size = video.stat().st_size
         chunk_size, count = self._chunk_params(size)
+
+        # Délai pré-upload aléatoire : simule un humain qui ouvre l'app, hésite,
+        # puis poste — évite la signature "init immédiatement après auth".
+        pre_delay = random.uniform(4.0, 18.0)
         if on_log:
-            on_log(f"  Initialisation upload ({size/1_048_576:.0f} Mo, {count} chunk(s))…")
+            on_log(f"  Préparation upload ({size/1_048_576:.0f} Mo, {count} chunk(s))… ({pre_delay:.0f}s)")
+        time.sleep(pre_delay)
+
         data = self._post(DIRECT_INIT, token, {
             "post_info": {
                 "title": (caption or "")[:2200],
@@ -150,6 +160,10 @@ class Uploader:
         if not (d.get("publish_id") and d.get("upload_url")):
             logger.error("Réponse init inattendue : %s", data)
             return False, f"Réponse inattendue : {data}"
+        # Pause entre l'init et le premier chunk : simule le temps de chargement
+        # de l'interface créateur avant que l'utilisateur confirme l'envoi.
+        time.sleep(random.uniform(1.5, 4.0))
+
         if not self._put_file(d["upload_url"], video, on_log=on_log):
             return False, "Upload fichier échoué"
         ok = self._wait(token, d["publish_id"], on_log=on_log)

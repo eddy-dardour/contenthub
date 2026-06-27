@@ -91,7 +91,10 @@ class NetworkPlugin(ABC):
         """Détermine l'état courant du réseau à partir de sa config."""
 
     def info(self) -> NetworkInfo:
-        state = self.refresh_state()
+        # Lecture seule : évalue l'état sans réécrire en DB à chaque appel
+        # (le UPDATE en boucle depuis le dashboard ralentissait l'UI). L'état
+        # persisté n'est mis à jour que via save_config()/refresh_state().
+        state = self._evaluate_state(self.load_config())
         return NetworkInfo(
             id=self.id,
             display_name=self.display_name,

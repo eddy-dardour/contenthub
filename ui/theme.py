@@ -67,6 +67,7 @@ QLabel#CardTitle {{ font-size: 15px; font-weight: 600; }}
 QLabel#CardNote {{ color: {TEXT_DIM}; font-size: 12px; }}
 QLabel#H1 {{ font-size: 22px; font-weight: 700; }}
 QLabel#H2 {{ font-size: 16px; font-weight: 600; }}
+QLabel#H3 {{ font-size: 14px; font-weight: 600; color: {TEXT_DIM}; }}
 QLabel#Dim {{ color: {TEXT_DIM}; }}
 QLabel#Metric {{ font-size: 28px; font-weight: 700; color: {ACCENT}; }}
 

@@ -46,7 +46,7 @@ class AccountRepository:
 
     # ── CRUD ────────────────────────────────────────────────────────────
 
-    def add(self, network_id: str, name: str, cooldown_hours: float = 2.0,
+    def add(self, network_id: str, name: str, cooldown_hours: float = 8.0,
             handle: str | None = None) -> int | None:
         try:
             return self.db.execute(
@@ -116,6 +116,26 @@ class AccountRepository:
             return
         creds = {**acc.credentials, **patch}
         self.set_credentials(account_id, creds)
+
+    # ── Drapeau « ré-authentification requise » ─────────────────────────
+    # Stocké DANS les credentials (clé `needs_reauth`) pour éviter une migration
+    # de schéma. Posé quand un refresh échoue (token révoqué / app re-review),
+    # levé automatiquement après une nouvelle liaison réussie.
+
+    def flag_reauth(self, account_id: int, needed: bool = True) -> None:
+        acc = self.get(account_id)
+        if not acc:
+            return
+        creds = dict(acc.credentials)
+        if needed:
+            creds["needs_reauth"] = True
+        else:
+            creds.pop("needs_reauth", None)
+        self.set_credentials(account_id, creds)
+
+    def needs_reauth(self, account_id: int) -> bool:
+        acc = self.get(account_id)
+        return bool(acc and acc.credentials.get("needs_reauth"))
 
     # ── Cooldown ────────────────────────────────────────────────────────
 

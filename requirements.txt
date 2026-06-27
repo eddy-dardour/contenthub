@@ -1,0 +1,7 @@
+# ContentHub — dépendances 100 % gratuites / open-source.
+PySide6>=6.6
+requests>=2.31
+python-dotenv>=1.0
+cryptography>=42.0
+fastapi>=0.111
+uvicorn[standard]>=0.29

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from enum import Enum
 
 
@@ -28,7 +27,7 @@ class Account:
     name: str
     handle: str | None = None
     is_active: bool = True
-    cooldown_hours: float = 2.0
+    cooldown_hours: float = 8.0
     last_posted: str | None = None
     credentials: dict = field(default_factory=dict)  # déchiffré en mémoire seulement
     content_type_id: str | None = None  # type de contenu assigné (None = tous)
@@ -41,11 +40,17 @@ class Account:
 
 @dataclass
 class ContentItem:
-    """Une vidéo prête à publier, produite par l'outil de génération local."""
+    """Une vidéo prête à publier, produite par l'outil de génération local.
+
+    Les vidéos sont nommées `<story>_<part>.mp4` (ex: 002_01.mp4). `story_key`
+    regroupe les parties d'une même histoire ; `part` donne leur ordre.
+    """
     key: str          # nom de fichier (clé unique)
     path: str
     caption: str = ""
     size_bytes: int = 0
+    story_key: str = ""   # préfixe d'histoire (ex: "002") — parties à publier ensemble
+    part: int = 1         # numéro de partie (ordre de publication)
 
 
 @dataclass

@@ -34,7 +34,7 @@ CREATE TABLE IF NOT EXISTS accounts (
     name             TEXT NOT NULL,
     handle           TEXT,                   -- @pseudo ou open_id affiché
     is_active        INTEGER NOT NULL DEFAULT 1,
-    cooldown_hours   REAL NOT NULL DEFAULT 2,
+    cooldown_hours   REAL NOT NULL DEFAULT 8,
     last_posted      TIMESTAMP,
     credentials_enc  TEXT,                   -- JSON chiffré (tokens, secrets)
     content_type_id  TEXT,                   -- type de contenu préféré (catalog id)
@@ -51,6 +51,7 @@ CREATE TABLE IF NOT EXISTS jobs (
     attempts      INTEGER NOT NULL DEFAULT 0,
     caption       TEXT,
     error         TEXT,
+    remote_id     TEXT,                       -- id de la vidéo côté plateforme (stats)
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     finished_at   TIMESTAMP
 );
@@ -87,11 +88,15 @@ class Database:
             try:
                 conn.executescript(_SCHEMA)
                 # Migrations — safe to run on existing DBs (ALTER TABLE IF NOT EXISTS not available in old SQLite)
-                try:
-                    conn.execute("ALTER TABLE accounts ADD COLUMN content_type_id TEXT")
-                    conn.commit()
-                except Exception:
-                    pass  # column already exists
+                for migration in (
+                    "ALTER TABLE accounts ADD COLUMN content_type_id TEXT",
+                    "ALTER TABLE jobs ADD COLUMN remote_id TEXT",
+                ):
+                    try:
+                        conn.execute(migration)
+                        conn.commit()
+                    except Exception:
+                        pass  # column already exists
             finally:
                 conn.close()
 

@@ -72,6 +72,9 @@ class LogsView(QWidget):
         sb = self.console.verticalScrollBar()
         sb.setValue(sb.maximum())
 
+    def refresh(self):
+        self.refresh_history()
+
     def refresh_history(self):
         jobs = recent_jobs(100)
         self.table.setRowCount(len(jobs))

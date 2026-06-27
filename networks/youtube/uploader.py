@@ -85,10 +85,17 @@ class Uploader:
             return None, "Session d'upload non initialisée (Location manquante)."
         return location, None
 
-    def _upload_file(self, session_url: str, video: Path, on_log=None) -> tuple[bool, str | None]:
+    def _upload_file(self, session_url: str, video: Path,
+                     on_log=None) -> tuple[bool, str | None, str | None]:
+        """Envoie le fichier par chunks. Retourne (ok, erreur, video_id).
+
+        La réponse finale 200/201 contient la ressource vidéo créée : on en
+        extrait l'`id` YouTube (nécessaire pour récupérer vues/likes ensuite).
+        """
         size = video.stat().st_size
         mb_total = size / 1_048_576
         offset = 0
+        video_id = None
         with video.open("rb") as f:
             while offset < size:
                 chunk = f.read(CHUNK)
@@ -103,15 +110,19 @@ class Uploader:
                 # 308 = en cours (chunk accepté) ; 200/201 = upload terminé.
                 if resp.status_code in (200, 201):
                     offset = size
+                    try:
+                        video_id = (resp.json() or {}).get("id")
+                    except Exception:
+                        video_id = None
                 elif resp.status_code == 308:
                     offset = end + 1
                 else:
-                    return False, self._http_error(resp)
+                    return False, self._http_error(resp), None
                 pct = int(offset / size * 100)
                 bar = "█" * (pct // 5) + "░" * (20 - pct // 5)
                 if on_log:
                     on_log(f"  ↑ Upload [{bar}] {pct}%  ({offset/1_048_576:.0f}/{mb_total:.0f} Mo)")
-        return True, None
+        return True, None, video_id
 
     @staticmethod
     def _http_error(resp) -> str:
@@ -125,13 +136,15 @@ class Uploader:
 
     # ── Point d'entrée ──────────────────────────────────────────────────
 
-    def upload(self, token: str, video_path: str, caption: str, on_log=None) -> tuple[bool, str | None]:
+    def upload(self, token: str, video_path: str, caption: str,
+               on_log=None) -> tuple[bool, str | None, str | None]:
+        """Publie la vidéo. Retourne (ok, erreur, video_id YouTube)."""
         video = Path(video_path)
         if not video.exists():
             logger.error("Vidéo introuvable : %s", video)
-            return False, "Fichier vidéo introuvable"
+            return False, "Fichier vidéo introuvable", None
         if cfg.simulate(self.config):
-            return self._simulate(video, caption), None
+            return self._simulate(video, caption), None, None
         try:
             metadata = self._metadata(caption)
             if on_log:
@@ -139,15 +152,16 @@ class Uploader:
             session_url, err = self._start_session(token, video, metadata)
             if not session_url:
                 logger.error("Session YouTube échouée : %s", err)
-                return False, err
-            ok, err = self._upload_file(session_url, video, on_log=on_log)
+                return False, err, None
+            ok, err, video_id = self._upload_file(session_url, video, on_log=on_log)
             if ok:
-                logger.info("Short publié (%s) sur « %s ».", self.privacy, self.account_name)
-                return True, None
-            return False, err
+                logger.info("Short publié (%s) sur « %s » [id=%s].",
+                            self.privacy, self.account_name, video_id)
+                return True, None, video_id
+            return False, err, None
         except Exception as e:
             logger.error("Erreur upload YouTube (%s) : %s", self.account_name, e)
-            return False, str(e)
+            return False, str(e), None
 
     def _simulate(self, video: Path, caption: str) -> bool:
         dest = app_data_dir() / "simulated_posts" / f"youtube_{self.account_name}"

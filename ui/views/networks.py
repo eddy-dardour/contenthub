@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel, QPushButton,
-    QDialog, QFormLayout, QLineEdit, QDialogButtonBox, QMessageBox,
+    QDialog, QFormLayout, QLineEdit, QDialogButtonBox,
 )
 
 from core.registry import get_plugins

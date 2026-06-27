@@ -36,7 +36,16 @@ def data_dir() -> Path:
     En mode figé (exe) : %APPDATA%/ContentHub/ — PERSISTANT entre rebuilds,
     jamais écrasé par PyInstaller. DB, .env, clés API et vidéos y survivent.
     En mode dev : contenthub/data/.
+
+    Override : CONTENTHUB_DATA_DIR force un chemin explicite. Indispensable
+    pour que les services lancés en Python (api_server, github_bridge) lisent
+    la MÊME source que l'exe installé (%APPDATA%) — sinon comptes/DB divergent.
     """
+    override = os.environ.get("CONTENTHUB_DATA_DIR")
+    if override:
+        d = Path(override)
+        d.mkdir(parents=True, exist_ok=True)
+        return d
     if _frozen():
         appdata = os.environ.get("APPDATA") or os.path.expanduser("~")
         d = Path(appdata) / "ContentHub"

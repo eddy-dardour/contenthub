@@ -2,28 +2,52 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from pathlib import Path
+
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout, QStackedWidget,
     QPushButton, QLabel, QButtonGroup,
 )
 
-from . import theme
 from .views.dashboard import DashboardView
 from .views.networks import NetworksView
 from .views.accounts import AccountsView
-from .views.schedule import ScheduleView
+from .views.content import ContentView
 from .views.stats import StatsView
 from .views.logs import LogsView
-from .views.content_assignment import ContentAssignmentDialog
+from . import brand as _brand_mod
+from . import theme
+
+
+def _app_icon() -> QIcon:
+    """Icône de l'application — cherche icon.svg ou icon.png dans ui/assets/."""
+    here = Path(__file__).resolve().parent / "assets"
+    for name in ("icon.svg", "icon.png"):
+        f = here / name
+        if f.exists():
+            if name.endswith(".svg"):
+                pm = _brand_mod._render_svg(f, 64)
+                if pm and not pm.isNull():
+                    return QIcon(pm)
+            else:
+                ico = QIcon(str(f))
+                if not ico.isNull():
+                    return ico
+    return QIcon()
 
 
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("ContentHub — Plateforme d'automatisation de contenu")
+        self.setWindowTitle("ContentHub")
         self.resize(1180, 760)
         self.setMinimumSize(960, 620)
+
+        ico = _app_icon()
+        if not ico.isNull():
+            self.setWindowIcon(ico)
 
         root = QWidget()
         root.setObjectName("Root")
@@ -37,15 +61,20 @@ class MainWindow(QMainWindow):
         self.dashboard = DashboardView()
         self.networks = NetworksView(on_changed=self._on_data_changed)
         self.accounts = AccountsView(on_changed=self._on_data_changed)
-        self.schedule = ScheduleView()
+        self.content = ContentView()
         self.stats = StatsView()
         self.logs = LogsView()
         for v in (self.dashboard, self.networks, self.accounts,
-                  self.schedule, self.stats, self.logs):
+                  self.content, self.stats, self.logs):
             self.stack.addWidget(v)
 
         layout.addWidget(self._sidebar())
         layout.addWidget(self.stack, 1)
+
+        # Rafraîchit la vue active toutes les 30s pour garder les données à jour.
+        self._refresh_timer = QTimer(self)
+        self._refresh_timer.timeout.connect(self._refresh_active)
+        self._refresh_timer.start(30_000)
 
     def _sidebar(self) -> QWidget:
         side = QWidget()
@@ -68,7 +97,7 @@ class MainWindow(QMainWindow):
             ("◈  Tableau de bord", 0),
             ("⬡  Réseaux", 1),
             ("◉  Comptes", 2),
-            ("▶  Catalogue", 3),
+            ("▶  Contenu", 3),
             ("◧  Statistiques", 4),
             ("≡  Logs", 5),
         ]
@@ -82,26 +111,18 @@ class MainWindow(QMainWindow):
         self.nav_group.button(0).setChecked(True)
 
         lay.addStretch(1)
-
-        # Bouton d'assignation rapide des types de contenu
-        assign_btn = QPushButton("⊞  Assigner les types")
-        assign_btn.setObjectName("NavBtn")
-        assign_btn.clicked.connect(self._open_assignment)
-        lay.addWidget(assign_btn)
-
         footer = QLabel("100 % local · open-source")
         footer.setObjectName("BrandSub")
         lay.addWidget(footer)
         return side
 
-    def _open_assignment(self):
-        dlg = ContentAssignmentDialog(self)
-        dlg.assigned.connect(self._on_data_changed)
-        dlg.exec()
+    def _refresh_active(self):
+        widget = self.stack.currentWidget()
+        if widget and hasattr(widget, "refresh"):
+            widget.refresh()
 
     def _navigate(self, index: int):
         self.stack.setCurrentIndex(index)
-        # Rafraîchit les vues data-driven à l'ouverture.
         widget = self.stack.widget(index)
         if hasattr(widget, "refresh"):
             widget.refresh()

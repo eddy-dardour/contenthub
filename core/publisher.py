@@ -34,10 +34,21 @@ from .registry import get_plugins, get_plugin
 
 logger = logging.getLogger(__name__)
 
-# Délais anti-spam (secondes) entre deux publications réussies.
-MIN_GAP_S = 20
-MAX_GAP_S = 60
+# Délais anti-shadowban entre deux publications réussies sur le même compte.
+# TikTok détecte les rafales courtes — on simule un comportement humain (~3-8 min).
+MIN_GAP_S = 180    # 3 min minimum
+MAX_GAP_S = 480    # 8 min maximum
 MAX_ATTEMPTS = 3
+
+# Hashtags rotatifs injectés en fin de caption pour varier l'empreinte textuelle.
+_HASHTAG_POOLS = [
+    ["#storytime", "#reddit", "#drama", "#relatable"],
+    ["#aita", "#redditstories", "#viralstory", "#fyp"],
+    ["#storytelling", "#viral", "#foryou", "#trending"],
+    ["#redditdrama", "#entertainme", "#storytime", "#fy"],
+    ["#aita", "#drama", "#viral", "#tiktokviral"],
+    ["#redditstories", "#fyp", "#relatable", "#storytelling"],
+]
 
 
 class Publisher:
@@ -80,12 +91,13 @@ class Publisher:
         return row is not None
 
     def _log_job(self, content: ContentItem, account: Account, status: JobStatus,
-                 attempts: int, error: str | None) -> None:
+                 attempts: int, error: str | None, remote_id: str | None = None) -> None:
         self.db.execute(
             "INSERT INTO jobs (content_key, network_id, account_id, status, "
-            "attempts, caption, error, finished_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+            "attempts, caption, error, remote_id, finished_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (content.key, account.network_id, account.id, status.value,
-             attempts, content.caption, error, datetime.now().isoformat()))
+             attempts, content.caption, error, remote_id, datetime.now().isoformat()))
 
     # ── Boucle de distribution ─────────────────────────────────────────
 
@@ -167,66 +179,158 @@ class Publisher:
     def circulate(self, network_id: str, accounts: list[Account],
                   items: list[ContentItem], progress: Callable | None = None,
                   stop_check: Callable | None = None) -> dict:
-        """Assigne UNE vidéo distincte à chaque compte, puis publie.
+        """Circulation : 1 vidéo unique par compte par cycle.
 
-        items est consommé dans l'ordre : compte i reçoit items[i]. S'il y a moins
-        de vidéos que de comptes, les comptes en trop sont ignorés (et signalés).
-        Chaque vidéo publiée avec succès est supprimée (consommée).
+        S'arrête dans deux cas :
+          1. Tous les comptes sont en cooldown → rien à faire ce slot.
+          2. Chaque compte éligible a reçu exactement 1 vidéo → cycle terminé.
         """
-        summary = {"published": 0, "failed": 0, "skipped": 0}
+        summary = {"published": 0, "failed": 0, "skipped": 0, "skipped_cooldown": 0}
         plugin = get_plugin(network_id)
         if not plugin:
             return summary
 
-        pairs = list(zip(accounts, items))
-        if len(items) < len(accounts):
+        # Arrêt condition 1 : tous les comptes en cooldown → inutile de continuer
+        cooldowns = [(a, self.accounts.remaining_cooldown(a.id)) for a in accounts]
+        all_in_cooldown = all(r > 0 for _, r in cooldowns)
+        if all_in_cooldown:
+            soonest = min(r for _, r in cooldowns)
+            h, s = divmod(soonest, 3600)
+            m = s // 60
+            human = f"{h}h{m:02d}" if h else f"{m}min"
             self._emit(progress, "info", {
-                "message": f"[{network_id}] {len(items)} vidéo(s) pour "
-                           f"{len(accounts)} compte(s) : {len(accounts)-len(items)} "
-                           "compte(s) sans vidéo (génération incomplète)."})
+                "message": f"[{network_id}] Tous les comptes en cooldown — "
+                           f"prochain slot disponible dans {human}. Routine arrêtée."})
+            summary["skipped_cooldown"] = len(accounts)
+            return summary
 
-        for account, item in pairs:
+        # Comptes disponibles d'abord (cascade)
+        sorted_accounts = sorted(accounts, key=lambda a: self.accounts.remaining_cooldown(a.id))
+        all_groups = content_mod.group_by_story(items)
+
+        for account in sorted_accounts:
             if self._stop.is_set() or (stop_check and stop_check()):
-                return summary
+                break
+
+            remaining = self.accounts.remaining_cooldown(account.id)
+            if remaining > 0:
+                h, s = divmod(remaining, 3600)
+                m = s // 60
+                human = f"{h}h{m:02d}" if h else f"{m}min"
+                self._emit(progress, "info", {
+                    "message": f"[{network_id}] {account.name} en cooldown — disponible dans {human}"})
+                summary["skipped_cooldown"] += 1
+                continue
+
+            # Première histoire que ce compte n'a pas encore publiée
+            assigned = None
+            for group in all_groups:
+                already_done = all(self._already_published(part.key, account.id) for part in group)
+                if not already_done:
+                    assigned = group
+                    break
+
+            if assigned is None:
+                self._emit(progress, "info", {
+                    "message": f"[{network_id}] {account.name} — toutes les vidéos déjà publiées."})
+                summary["skipped"] += 1
+                continue
+
+            # Arrêt condition 2 : 1 seule vidéo par compte par cycle (anti-spam)
+            # On publie uniquement la 1ère partie de l'histoire assignée
+            self._publish_story(plugin, account, assigned[:1], summary, progress, stop_check)
+
+        return summary
+
+    def _publish_story(self, plugin, account: Account, parts: list[ContentItem],
+                       summary: dict, progress, stop_check=None) -> None:
+        """Publie toutes les parties d'une histoire sur un compte, dans l'ordre.
+
+        Si une partie échoue, on continue avec les suivantes (chaque partie est
+        une vidéo autonome) mais on log l'échec. L'ordre des parties est garanti.
+        """
+        if len(parts) > 1:
+            self._emit(progress, "info", {
+                "message": f"[{account.name}] histoire « {parts[0].story_key} » : "
+                           f"{len(parts)} parties à publier dans l'ordre."})
+        for item in parts:
+            if self._stop.is_set() or (stop_check and stop_check()):
+                return
             self._wait_if_paused()
             if self._already_published(item.key, account.id):
                 summary["skipped"] += 1
                 continue
-            self._publish_one(plugin, account, item, summary, progress,
-                              consume=True)
-        return summary
+            self._publish_one(plugin, account, item, summary, progress)
 
     # ── Publication d'une paire (compte, vidéo) ─────────────────────────
 
     def _publish_one(self, plugin, account: Account, item: ContentItem,
-                     summary: dict, progress, consume: bool = False) -> None:
+                     summary: dict, progress) -> None:
         self._wait_if_paused()
         self._wait_cooldown(account, item, progress)
         if self._stop.is_set():
             return
 
+        varied = self._vary_caption(item)
         self._emit(progress, "uploading", {
             "network": plugin.display_name, "account": account.name,
             "content": item.key})
 
-        ok, attempts, error = self._publish_with_retry(plugin, account, item, progress)
+        ok, attempts, error, remote_id = self._publish_with_retry(plugin, account, varied, progress)
 
         if ok:
             summary["published"] += 1
             self.accounts.mark_posted(account.id)
-            self._log_job(item, account, JobStatus.SUCCESS, attempts, None)
+            self.accounts.flag_reauth(account.id, needed=False)  # auth OK → lève le drapeau
+            self._log_job(item, account, JobStatus.SUCCESS, attempts, None, remote_id=remote_id)
             self._emit(progress, "success", {
                 "network": plugin.display_name, "account": account.name,
                 "content": item.key})
-            if consume:
-                content_mod.remove_content(item.key)
+            content_mod.remove_content(item.key)
             self._human_gap()
         else:
             summary["failed"] += 1
             self._log_job(item, account, JobStatus.FAILED, attempts, error)
+            # Détecte un échec d'authentification → marque le compte à ré-authentifier.
+            if self._is_auth_error(error):
+                self.accounts.flag_reauth(account.id, needed=True)
+                summary.setdefault("needs_reauth", []).append(account.name)
+                self._emit(progress, "needs_reauth", {
+                    "network": plugin.display_name, "account": account.name})
+                try:
+                    from . import progress_state
+                    progress_state.add_reauth(account.name)
+                except Exception:
+                    pass
             self._emit(progress, "failed", {
                 "network": plugin.display_name, "account": account.name,
                 "content": item.key, "error": error})
+
+    @staticmethod
+    def _is_auth_error(error: str | None) -> bool:
+        """Détecte un échec lié à l'authentification (token expiré/révoqué)."""
+        if not error:
+            return False
+        e = error.lower()
+        return (
+            "401" in e or "invalid authentication" in e
+            or "invalid_grant" in e or "expiré" in e or "expired" in e
+            or "reauth" in e or "ré-auth" in e or "unauthorized" in e
+            or "access token" in e
+        )
+
+    @staticmethod
+    def _vary_caption(item: ContentItem) -> ContentItem:
+        """Ajoute un bloc de hashtags rotatif unique à chaque publication."""
+        pool = random.choice(_HASHTAG_POOLS)
+        tags = " ".join(random.sample(pool, k=min(3, len(pool))))
+        caption = (item.caption or "").rstrip()
+        if caption:
+            caption = f"{caption}\n\n{tags}"
+        else:
+            caption = tags
+        from dataclasses import replace
+        return replace(item, caption=caption)
 
     def _publish_with_retry(self, plugin, account: Account, item: ContentItem,
                             progress):
@@ -241,7 +345,7 @@ class Publisher:
                 result = plugin.publish(fresh, item, on_log=lambda m: self._emit(
                     progress, "log", {"message": m}))
                 if result.success:
-                    return True, attempts, None
+                    return True, attempts, None, result.remote_id
                 error = result.detail
             except Exception as e:
                 error = str(e)
@@ -253,18 +357,22 @@ class Publisher:
                     "account": account.name, "attempt": attempt,
                     "backoff": backoff, "error": error})
                 self._interruptible_sleep(backoff)
-        return False, attempts, error
+        return False, attempts, error, None
 
     # ── Temporisations ──────────────────────────────────────────────────
 
     def _wait_cooldown(self, account: Account, item: ContentItem, progress):
+        """En mode manuel (run), attend le cooldown. En mode circulate, on cascade."""
         while not self.accounts.can_post(account.id):
             if self._stop.is_set():
                 return
             remaining = self.accounts.remaining_cooldown(account.id)
+            h, s = divmod(remaining, 3600)
+            m = s // 60
+            human = f"{h}h{m:02d}" if h else f"{m}min"
             self._emit(progress, "cooldown", {
                 "account": account.name, "content": item.key,
-                "remaining": remaining})
+                "remaining": remaining, "human": human})
             self._interruptible_sleep(min(remaining, 30) or 1)
 
     def _human_gap(self):

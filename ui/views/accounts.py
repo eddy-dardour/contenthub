@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QComboBox,
+    QWidget, QVBoxLayout, QHBoxLayout, QPushButton, QComboBox,
     QLineEdit, QTableWidget, QTableWidgetItem, QHeaderView, QMessageBox,
     QDoubleSpinBox, QAbstractItemView,
 )
@@ -15,7 +14,6 @@ from core.accounts import AccountRepository
 from core.catalog import list_types
 from ..workers import LinkWorker
 from .. import theme, widgets, brand
-from .content_assignment import ContentAssignmentDialog
 
 _BTN_STYLE = (
     f"QPushButton {{ background:{theme.SURFACE_2}; border:1px solid {theme.BORDER}; "
@@ -56,10 +54,6 @@ class AccountsView(QWidget):
         hdr = QHBoxLayout()
         hdr.addWidget(widgets.title("Comptes"))
         hdr.addStretch(1)
-        assign_btn = QPushButton("⊞  Assigner les types")
-        assign_btn.setObjectName("Primary")
-        assign_btn.clicked.connect(self._open_assignment)
-        hdr.addWidget(assign_btn)
         root.addLayout(hdr)
         root.addWidget(widgets.dim(
             "Ajoutez des comptes par réseau, liez-les (OAuth) puis assignez le type "
@@ -80,7 +74,7 @@ class AccountsView(QWidget):
 
         self.cooldown = QDoubleSpinBox()
         self.cooldown.setRange(0, 72)
-        self.cooldown.setValue(2)
+        self.cooldown.setValue(8)
         self.cooldown.setSuffix(" h cooldown")
         self.cooldown.setFixedWidth(130)
 
@@ -141,6 +135,7 @@ class AccountsView(QWidget):
                 f"{plugin.display_name} doit d'abord être configuré (clés API) "
                 "dans l'onglet Réseaux.")
             return
+        self._pending_link_id = account_id
         self._link_worker = LinkWorker(network_id, account_id)
         self._link_worker.finished_result.connect(self._on_linked)
         self._link_worker.start()
@@ -151,9 +146,14 @@ class AccountsView(QWidget):
 
     def _on_linked(self, success: bool, detail: str):
         if success:
+            # Liaison réussie → lève le drapeau de ré-authentification.
+            pending = getattr(self, "_pending_link_id", None)
+            if pending is not None:
+                self.repo.flag_reauth(pending, needed=False)
             QMessageBox.information(self, "Compte lié", detail)
         else:
             QMessageBox.warning(self, "Liaison échouée", detail)
+        self._pending_link_id = None
         self.refresh()
         self.on_changed()
 
@@ -164,12 +164,6 @@ class AccountsView(QWidget):
     def _set_content_type(self, account_id: int, content_type_id: str | None):
         self.repo.set_content_type(account_id, content_type_id)
         self.on_changed()
-
-    def _open_assignment(self):
-        dlg = ContentAssignmentDialog(self)
-        dlg.assigned.connect(self.refresh)
-        dlg.assigned.connect(self.on_changed)
-        dlg.exec()
 
     def _delete(self, account_id: int, name: str):
         rep = QMessageBox.question(self, "Supprimer",
@@ -184,12 +178,16 @@ class AccountsView(QWidget):
     def refresh(self):
         plugins = get_plugins()
         rows = []
+        reauth_pending = []
         for p in plugins.values():
             for a in p.list_accounts():
                 rows.append((p, a))
+                if a.credentials.get("needs_reauth"):
+                    reauth_pending.append((p, a))
         self.table.setRowCount(len(rows))
         for r, (p, a) in enumerate(rows):
             linked = p.is_account_linked(a)
+            needs_reauth = bool(a.credentials.get("needs_reauth"))
             self.table.setRowHeight(r, 48)
 
             net_item = QTableWidgetItem(f" {p.display_name}")
@@ -198,8 +196,17 @@ class AccountsView(QWidget):
             self.table.setItem(r, 1, QTableWidgetItem(a.name))
             self.table.setItem(r, 2, QTableWidgetItem(a.handle or "—"))
 
-            lk = QTableWidgetItem("✔ Oui" if linked else "✗ Non")
-            lk.setForeground(QColor(theme.OK) if linked else QColor(theme.TEXT_FAINT))
+            # Colonne « Lié » : signale aussi une ré-authentification requise.
+            if needs_reauth:
+                lk = QTableWidgetItem("⚠ Ré-auth")
+                lk.setForeground(QColor(theme.ERR))
+                lk.setToolTip("Token expiré/révoqué — cliquez « Re-lier » pour ré-authentifier.")
+            elif linked:
+                lk = QTableWidgetItem("✔ Oui")
+                lk.setForeground(QColor(theme.OK))
+            else:
+                lk = QTableWidgetItem("✗ Non")
+                lk.setForeground(QColor(theme.TEXT_FAINT))
             self.table.setItem(r, 3, lk)
 
             act = QTableWidgetItem("Actif" if a.is_active else "Inactif")
@@ -207,7 +214,42 @@ class AccountsView(QWidget):
             self.table.setItem(r, 4, act)
 
             self.table.setCellWidget(r, 5, self._content_type_cell(p, a))
-            self.table.setCellWidget(r, 6, self._actions_cell(p, a, linked))
+            self.table.setCellWidget(r, 6, self._actions_cell(p, a, linked, needs_reauth))
+
+        # Ré-authentification automatique : si un compte a été marqué (token
+        # révoqué pendant une routine), propose de relancer l'OAuth tout de suite.
+        # Une seule invite à la fois et jamais en boucle (anti-spam navigateur).
+        self._maybe_auto_reauth(reauth_pending)
+
+    def _maybe_auto_reauth(self, pending: list):
+        """Déclenche automatiquement la ré-auth des comptes flaggés.
+
+        Pour éviter d'ouvrir plusieurs onglets navigateur en rafale, on traite
+        UN compte à la fois et on n'auto-déclenche pas un compte déjà tenté dans
+        cette session (l'utilisateur garde le bouton « Ré-authentifier » manuel).
+        """
+        if not pending:
+            return
+        if self._link_worker and self._link_worker.isRunning():
+            return  # une liaison est déjà en cours
+        attempted = getattr(self, "_auto_reauth_attempted", set())
+        for plugin, account in pending:
+            if account.id in attempted:
+                continue
+            # Réseau en standby (ex: TikTok en review) → pas d'auto-reauth possible.
+            if plugin.info().state.value == "standby":
+                continue
+            attempted.add(account.id)
+            self._auto_reauth_attempted = attempted
+            rep = QMessageBox.question(
+                self, "Ré-authentification requise",
+                f"Le token du compte « {account.name} » ({plugin.display_name}) a expiré.\n\n"
+                "Ouvrir la page d'autorisation maintenant pour le ré-authentifier ?",
+                QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+                QMessageBox.StandardButton.Yes)
+            if rep == QMessageBox.StandardButton.Yes:
+                self._link(plugin.id, account.id)
+            return  # un seul à la fois
 
     def _content_type_cell(self, plugin, account) -> QWidget:
         cell = QWidget()
@@ -238,15 +280,23 @@ class AccountsView(QWidget):
         lay.addWidget(combo)
         return cell
 
-    def _actions_cell(self, plugin, account, linked: bool) -> QWidget:
+    def _actions_cell(self, plugin, account, linked: bool, needs_reauth: bool = False) -> QWidget:
         cell = QWidget()
         cell.setStyleSheet("background: transparent;")
         lay = QHBoxLayout(cell)
         lay.setContentsMargins(6, 4, 6, 4)
         lay.setSpacing(6)
 
-        link_btn = QPushButton("Re-lier" if linked else "Lier")
-        link_btn.setStyleSheet(_BTN_STYLE)
+        if needs_reauth:
+            link_btn = QPushButton("⚠ Ré-authentifier")
+            # Met le bouton en évidence quand une ré-auth est requise.
+            link_btn.setStyleSheet(
+                f"QPushButton {{ background:{theme.ERR}; border:none; border-radius:6px; "
+                f"padding:4px 10px; color:#0b0d12; font-size:12px; font-weight:600; }}"
+                f"QPushButton:hover {{ background:{theme.ACCENT}; }}")
+        else:
+            link_btn = QPushButton("Re-lier" if linked else "Lier")
+            link_btn.setStyleSheet(_BTN_STYLE)
         link_btn.clicked.connect(
             lambda _, n=plugin.id, i=account.id: self._link(n, i))
         lay.addWidget(link_btn)

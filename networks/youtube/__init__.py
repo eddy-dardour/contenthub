@@ -85,14 +85,32 @@ class YouTubeNetwork(NetworkPlugin):
                 False, f"Compte « {account.name} » non lié ou token expiré.")
 
         up = Uploader(config, account_name=account.name)
-        ok, detail = up.upload(token, content.path, content.caption, on_log=on_log)
+        ok, detail, video_id = up.upload(token, content.path, content.caption, on_log=on_log)
+
+        # Retry automatique si 401 (token révoqué entre valid_token et l'upload réel).
+        if not ok and detail and "401" in detail:
+            logger.warning("[%s] 401 pendant upload — tentative de refresh.", account.name)
+            fresh_token = oauth.refresh_access_token(config, account.credentials,
+                                                     on_refresh=persist_refresh)
+            if fresh_token:
+                if on_log:
+                    on_log("  ↻ Token rafraîchi, nouvel essai…")
+                ok, detail, video_id = up.upload(fresh_token, content.path, content.caption, on_log=on_log)
+
         if ok:
-            return PublishResult(True, "Short publié.")
+            return PublishResult(True, "Short publié.", remote_id=video_id)
         return PublishResult(False, detail or "Échec de l'upload YouTube.")
 
     # ── Stats distantes (API Data v3) ───────────────────────────────────
 
     def fetch_stats(self, account: Account) -> dict | None:
+        """Vues + likes agrégés sur les vidéos publiées par ContentHub.
+
+        On lit les IDs YouTube des vidéos postées (table jobs, remote_id) et on
+        interroge videos.list?part=statistics → somme des viewCount/likeCount.
+        Si aucun id n'est encore enregistré (anciens posts), on retombe sur les
+        stats de chaîne (vues totales) faute de mieux.
+        """
         import requests
         config = self.load_config()
         if cfg.simulate(config):
@@ -102,11 +120,43 @@ class YouTubeNetwork(NetworkPlugin):
             on_refresh=lambda t: self.accounts.update_credentials(account.id, t))
         if not token:
             return None
+
+        headers = {"Authorization": f"Bearer {token}"}
+
+        # IDs des vidéos publiées par ce compte (avec remote_id non nul).
+        from core.db import get_db
+        rows = get_db().query(
+            "SELECT remote_id FROM jobs WHERE account_id = ? AND status = 'success' "
+            "AND remote_id IS NOT NULL AND remote_id != ''", (account.id,))
+        video_ids = [r["remote_id"] for r in rows]
+
         try:
+            if video_ids:
+                total_views = total_likes = 0
+                videos_counted = 0
+                # videos.list accepte jusqu'à 50 ids par requête.
+                for i in range(0, len(video_ids), 50):
+                    batch = video_ids[i:i + 50]
+                    resp = requests.get(
+                        "https://www.googleapis.com/youtube/v3/videos",
+                        params={"part": "statistics", "id": ",".join(batch)},
+                        headers=headers, timeout=15)
+                    for item in resp.json().get("items") or []:
+                        s = item.get("statistics", {})
+                        total_views += int(s.get("viewCount", 0) or 0)
+                        total_likes += int(s.get("likeCount", 0) or 0)
+                        videos_counted += 1
+                return {
+                    "videos": videos_counted,
+                    "views": total_views,
+                    "likes": total_likes,
+                }
+
+            # Fallback : stats de chaîne (pas de likes par vidéo disponibles).
             resp = requests.get(
                 "https://www.googleapis.com/youtube/v3/channels",
                 params={"part": "statistics", "mine": "true"},
-                headers={"Authorization": f"Bearer {token}"}, timeout=15)
+                headers=headers, timeout=15)
             items = resp.json().get("items") or []
             if not items:
                 return None

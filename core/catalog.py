@@ -15,7 +15,7 @@ leur propre `generator_kind`.
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 
 # Générateurs disponibles. Pour l'instant seul "manual" (outil TTS local) existe.

@@ -60,6 +60,10 @@ def run(content_type: ContentType,
 
     Pour chaque plateforme épinglée : génère 1 vidéo par compte lié+actif, puis
     distribue une vidéo unique par compte. Retourne un récap agrégé.
+
+    Événements émis (en plus des événements publisher) :
+      step     → {label, index, total}   étape nommée
+      progress → {value, maximum}        avancement global (0..maximum)
     """
     summary = {"published": 0, "failed": 0, "skipped": 0,
                "generated": 0, "per_network": {}, "no_accounts": False}
@@ -73,34 +77,73 @@ def run(content_type: ContentType,
         _emit(progress, "done", summary)
         return summary
 
+    # Calcul du nombre total d'étapes : génération + upload par compte par réseau
+    total_accounts = sum(len(accs) for accs in by_network.values())
+    # steps = 1 génération par réseau + 1 upload par compte
+    total_steps = len(by_network) + total_accounts
+    current_step = 0
+
+    def _step(label: str):
+        nonlocal current_step
+        current_step += 1
+        _emit(progress, "step", {"label": label, "index": current_step, "total": total_steps})
+        _emit(progress, "progress", {"value": current_step, "maximum": total_steps})
+
     publisher = Publisher()
 
     for net_id, accounts in by_network.items():
         if stop_check and stop_check():
             break
         n = len(accounts)
+
+        _step(f"Génération {net_id} — {n} vidéo(s)")
         _emit(progress, "info", {
             "message": f"[{net_id}] {n} compte(s) → génération de {n} vidéo(s) unique(s)…"})
 
-        # 1) Génère N vidéos uniques pour cette plateforme.
-        ok = generator.generate(
-            n, content_type.gen_type,
-            on_log=lambda m: _emit(progress, "log", {"message": m}),
-            stop_check=stop_check)
-        items = content_mod.list_content()
+        # 1) Vérifie le contenu déjà disponible dans output/.
+        # Si des vidéos sont présentes (run précédent interrompu, génération manuelle…),
+        # on les réutilise et on ne génère que le complément nécessaire.
+        ok = True  # défaut : contenu disponible sans génération
+        existing = content_mod.list_content()
+        need = max(n - len(existing), 0)
+        if need == 0:
+            _emit(progress, "info", {
+                "message": f"[{net_id}] {len(existing)} vidéo(s) déjà disponible(s) — génération ignorée."})
+            items = existing[:n]
+        else:
+            if existing:
+                _emit(progress, "info", {
+                    "message": f"[{net_id}] {len(existing)} vidéo(s) existante(s), "
+                               f"génération de {need} vidéo(s) supplémentaire(s)…"})
+            before_keys = {i.key for i in existing}
+            ok = generator.generate(
+                need, content_type.gen_type,
+                on_log=lambda m: _emit(progress, "log", {"message": m}),
+                stop_check=stop_check)
+            all_items = content_mod.list_content()
+            new_items = [i for i in all_items if i.key not in before_keys]
+            items = (existing + new_items)[:n]
         summary["generated"] += len(items)
         if not ok or not items:
             _emit(progress, "info", {
                 "message": f"[{net_id}] Génération incomplète ({len(items)} vidéo(s)). "
                            "Distribution de ce qui est disponible."})
 
-        # 2) Circulation : une vidéo distincte par compte.
+        # 2) Circulation : une vidéo distincte par compte, avec step par upload.
+        def _progress_with_step(ev: str, data: dict):
+            if ev == "uploading":
+                _step(f"Upload {data.get('account','')} ({net_id})")
+            _emit(progress, ev, data)
+
         net_summary = publisher.circulate(
-            net_id, accounts, items, progress=progress, stop_check=stop_check)
+            net_id, accounts, items,
+            progress=_progress_with_step, stop_check=stop_check)
         summary["per_network"][net_id] = net_summary
         summary["published"] += net_summary["published"]
         summary["failed"] += net_summary["failed"]
-        summary["skipped"] += net_summary["skipped"]
+        summary["skipped"] += net_summary.get("skipped", 0)
+        summary["skipped_cooldown"] = summary.get("skipped_cooldown", 0) + net_summary.get("skipped_cooldown", 0)
 
+    _emit(progress, "progress", {"value": total_steps, "maximum": total_steps})
     _emit(progress, "done", summary)
     return summary

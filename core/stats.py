@@ -13,11 +13,10 @@ Le cœur n'appelle jamais une API directement : tout passe par le plugin.
 from __future__ import annotations
 
 import logging
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .db import get_db
 from .registry import get_plugins
-from .models import Account
 
 logger = logging.getLogger(__name__)
 

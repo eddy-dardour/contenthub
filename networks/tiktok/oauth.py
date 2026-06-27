@@ -208,9 +208,14 @@ def refresh(config: dict, refresh_token: str) -> dict | None:
     }
 
 
+_NEEDS_REAUTH = "__needs_reauth__"
+
+
 def valid_token(config: dict, credentials: dict, on_refresh=None) -> str | None:
     """Retourne un access_token valide, rafraîchi si expiré.
 
+    Retourne `_NEEDS_REAUTH` si le token est expiré ET le refresh a échoué
+    (token révoqué / app re-review) — l'appelant doit déclencher un nouveau flux OAuth.
     `on_refresh(new_tokens)` est appelé si un refresh a eu lieu, pour persister.
     """
     token = credentials.get("access_token")
@@ -225,10 +230,19 @@ def valid_token(config: dict, credentials: dict, on_refresh=None) -> str | None:
             expired = datetime.fromisoformat(expires_at) <= datetime.now()
         except (ValueError, TypeError):
             expired = False
-    if expired and credentials.get("refresh_token"):
-        new = refresh(config, credentials["refresh_token"])
-        if new:
-            if on_refresh:
-                on_refresh(new)
-            return new["access_token"]
+    if expired:
+        rt = credentials.get("refresh_token")
+        if rt:
+            new = refresh(config, rt)
+            if new:
+                if on_refresh:
+                    on_refresh(new)
+                return new["access_token"]
+        # Token expiré + refresh impossible → reauth requise
+        logger.warning("Token expiré et refresh impossible — reauth requise.")
+        return _NEEDS_REAUTH
     return token
+
+
+def needs_reauth(token: str | None) -> bool:
+    return token == _NEEDS_REAUTH

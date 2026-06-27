@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QLabel
 
 from core.registry import get_plugins
 from core import content, publisher
 from core.accounts import AccountRepository
-from .. import theme, widgets, brand
+from .. import widgets, brand
 
 
 class DashboardView(QWidget):
@@ -44,18 +44,35 @@ class DashboardView(QWidget):
         root.addWidget(net_card)
         root.addStretch(1)
 
+        # Signature de l'état des réseaux : évite de reconstruire les widgets
+        # quand rien n'a changé (le rebuild complet est coûteux et fait flicker).
+        self._net_signature: tuple | None = None
+
         self._timer = QTimer(self)
-        self._timer.timeout.connect(self.refresh)
-        self._timer.start(4000)
+        self._timer.timeout.connect(self._tick)
+        # 12 s : suffisant pour un tableau de bord, sans matraquer la DB/Fernet.
+        self._timer.start(12000)
         self.refresh()
+
+    def _tick(self):
+        # Ne rafraîchit en boucle que si le dashboard est visible (économie CPU).
+        if self.isVisible():
+            self.refresh()
 
     def refresh(self):
         plugins = get_plugins()
-        active = sum(1 for p in plugins.values()
-                     if p.info().state.value == "configured")
+        active = 0
         linked = 0
+        # Un seul parcours des comptes par plugin (au lieu de 2 décryptages).
+        net_states = {}
         for p in plugins.values():
-            linked += sum(1 for a in p.list_accounts() if p.is_account_linked(a))
+            state = p.info().state.value
+            net_states[p.id] = state
+            if state == "configured":
+                active += 1
+            for a in p.list_accounts():
+                if p.is_account_linked(a):
+                    linked += 1
         items = len(content.list_content())
         stats = publisher.stats()
 
@@ -64,7 +81,14 @@ class DashboardView(QWidget):
         self.m_content._value_label.setText(str(items))
         self.m_published._value_label.setText(str(stats["jobs_success"]))
 
-        # Reconstruit la liste des réseaux.
+        # Reconstruit la liste des réseaux UNIQUEMENT si elle a changé.
+        signature = tuple(
+            (p.id, net_states[p.id], p.info().accounts_count)
+            for p in plugins.values())
+        if signature == self._net_signature:
+            return
+        self._net_signature = signature
+
         while self.net_box.count():
             item = self.net_box.takeAt(0)
             if item.widget():

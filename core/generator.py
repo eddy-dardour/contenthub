@@ -86,10 +86,17 @@ def generate(count: int, content_type: str | None = None,
     env["FFMPEG_PATH"] = _ffmpeg_path()
     env["WHISPER_CACHE_DIR"] = str(_resources_dir() / "models")
 
+    # CREATE_NO_WINDOW : empêche l'ouverture d'une fenêtre console Windows
+    # pour le sous-processus de génération (sinon un terminal surgit à chaque run).
+    creationflags = 0
+    if sys.platform == "win32":
+        creationflags = subprocess.CREATE_NO_WINDOW
+
     proc = subprocess.Popen(
         cmd, cwd=str(data_dir()), env=env,
         stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
-        text=True, encoding="utf-8", errors="replace", bufsize=1)
+        text=True, encoding="utf-8", errors="replace", bufsize=1,
+        creationflags=creationflags)
 
     try:
         for line in proc.stdout:

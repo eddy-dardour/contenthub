@@ -54,6 +54,20 @@ def glyph(key: str) -> str:
     return _GLYPHS.get(key, "●")
 
 
+def _render_svg(path: Path, size: int) -> QPixmap:
+    """Rendu d'un fichier SVG quelconque en QPixmap carré."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    renderer = QSvgRenderer(str(path))
+    if not renderer.isValid():
+        return pm
+    painter = QPainter(pm)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    renderer.render(painter)
+    painter.end()
+    return pm
+
+
 @lru_cache(maxsize=64)
 def pixmap(key: str, size: int = 24) -> QPixmap:
     """Logo de la marque en QPixmap carré `size`x`size` (rendu net via SVG).
@@ -62,19 +76,11 @@ def pixmap(key: str, size: int = 24) -> QPixmap:
     retomber sur glyph()).
     """
     svg = _logos_dir() / f"{key}.svg"
-    pm = QPixmap(size, size)
-    pm.fill(Qt.transparent)
     if not svg.exists():
+        pm = QPixmap(size, size)
+        pm.fill(Qt.transparent)
         return pm
-    renderer = QSvgRenderer(str(svg))
-    if not renderer.isValid():
-        return pm
-    painter = QPainter(pm)
-    painter.setRenderHint(QPainter.Antialiasing, True)
-    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
-    renderer.render(painter)
-    painter.end()
-    return pm
+    return _render_svg(svg, size)
 
 
 def icon(key: str, size: int = 24) -> QIcon:

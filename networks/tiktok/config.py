@@ -18,9 +18,9 @@ SANDBOX_CLIENT_KEY    = os.getenv("TIKTOK_SANDBOX_KEY", "")
 SANDBOX_CLIENT_SECRET = os.getenv("TIKTOK_SANDBOX_SECRET", "")
 
 DEFAULT_REDIRECT_URI = "http://localhost:8723/callback"
-DEFAULT_PRIVACY_LEVEL = "SELF_ONLY"
+DEFAULT_PRIVACY_LEVEL = "PUBLIC_TO_EVERYONE"
 
-SCOPES = "user.info.basic,video.upload,video.publish"
+SCOPES = "user.info.basic,video.publish"
 
 
 def client_key(config: dict) -> str:
