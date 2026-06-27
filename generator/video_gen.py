@@ -141,9 +141,18 @@ class VideoAssembler:
 
     @staticmethod
     def _esc_filter_path(path: str) -> str:
-        """Échappe un chemin Windows pour usage dans un filtre ffmpeg."""
+        """Échappe un chemin pour usage dans une valeur de filtre ffmpeg.
+
+        Règles libass/ffmpeg :
+          - backslashes → forward slashes
+          - ':' → '\\:' (séparateur de filtre)
+          - "'" → "\\'" (guillemet simple dans la valeur)
+          - '[', ']' → '\\[', '\\]' (délimiteurs de filtergraph)
+        """
         p = str(path).replace('\\', '/')
+        p = p.replace("'", "\\'")
         p = p.replace(':', '\\:')
+        p = p.replace('[', '\\[').replace(']', '\\]')
         return p
 
     # ── Carte Reddit (début de vidéo) ────────────────────────────────
@@ -175,9 +184,11 @@ class VideoAssembler:
             from PIL import Image
             p = Path(self.config.ICONS_DIR) / name
             if not p.exists():
+                logger.debug(f'Icône introuvable : {p}')
                 return None
             return Image.open(p).convert('RGBA').resize((size, size), Image.LANCZOS)
-        except Exception:
+        except Exception as e:
+            logger.warning(f'Chargement icône {name} échoué : {e}')
             return None
 
     def _award_icons(self) -> list:
@@ -386,11 +397,11 @@ class VideoAssembler:
         # fontsdir indique à libass où trouver "Montserrat Black" (sans install système).
         subs_filter = ''
         if ass_path and Path(ass_path).exists():
-            fonts_dir = self._esc_filter_path(self.config.FONTS_DIR)
             subs_filter = (
                 f",ass='{self._esc_filter_path(ass_path)}'"
-                f":fontsdir='{fonts_dir}'"
+                f":fontsdir='{self._esc_filter_path(self.config.FONTS_DIR)}'"
             )
+            logger.debug(f'Filtre subs : {subs_filter}')
 
         # Chaîne vidéo : crop portrait → [carte Reddit] → sous-titres → trim.
         if card_path:

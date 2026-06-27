@@ -50,11 +50,35 @@ def _resolve_ffmpeg() -> str:
     return 'ffmpeg'
 
 def _resolve_asset_subdir(name: str) -> Path:
-    """Resolve asset subdirectory: try bundle first, fallback to app dir."""
+    """Resolve asset subdirectory.
+
+    Ordre de priorité :
+    1. TIKTOK_ASSETS_DIR/<name>  — injecté par ContentHub (resources/assets/)
+    2. BUNDLE_DIR/assets/<name>  — bundle PyInstaller
+    3. APP_DIR/assets/<name>     — dossier à côté de l'exe/script
+    4. resources/assets/<name>   — remonte depuis generator/ vers la racine du projet
+    """
+    override = os.getenv('TIKTOK_ASSETS_DIR')
+    if override:
+        p = Path(override) / name
+        if p.exists():
+            return p
+
     bundled = BUNDLE_DIR / 'assets' / name
     if bundled.exists():
         return bundled
-    return APP_DIR / 'assets' / name
+
+    local = APP_DIR / 'assets' / name
+    if local.exists():
+        return local
+
+    # Remonte depuis generator/ vers contenthub/resources/assets/
+    project_root = Path(__file__).resolve().parent.parent
+    candidate = project_root / 'resources' / 'assets' / name
+    if candidate.exists():
+        return candidate
+
+    return local  # fallback (peut ne pas exister)
 
 
 class Config:
