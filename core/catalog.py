@@ -75,6 +75,15 @@ CATALOG: tuple[ContentType, ...] = (
         gen_type="rotate",
         networks=("tiktok", "youtube", "facebook"),
     ),
+    ContentType(
+        id="carousel",
+        label="Carousel",
+        description="Diaporama multi-images (bientôt disponible — format carousel natif).",
+        icon="🖼",
+        generator_kind="carousel",
+        gen_type="carousel",
+        networks=("facebook",),
+    ),
 )
 
 
