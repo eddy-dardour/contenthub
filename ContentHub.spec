@@ -36,6 +36,12 @@ _assets = os.path.join(os.getcwd(), 'ui', 'assets')
 if os.path.exists(_assets):
     datas.append((_assets, os.path.join('ui', 'assets')))
 
+# Scripts de démarrage (api_server.py, start_ngrok_tunnel.py, setup_ngrok.py)
+for script in ['api_server.py', 'start_ngrok_tunnel.py', 'setup_ngrok.py', 'morning_routine.py']:
+    script_path = res(script)
+    if os.path.exists(script_path):
+        datas.append((script_path, '.'))
+
 hiddenimports = [
     'networks.tiktok', 'networks.youtube', 'networks.facebook',
     # Rendu des logos SVG des réseaux (ui/brand.py).
