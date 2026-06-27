@@ -7,7 +7,7 @@ La collecte distante tourne dans un thread (StatsWorker) pour ne pas geler l'UI.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QGridLayout, QPushButton,
     QTableWidget, QTableWidgetItem, QHeaderView, QCheckBox,
@@ -67,6 +67,9 @@ class StatsView(QWidget):
         self.status = widgets.dim("")
         root.addWidget(self.status)
 
+        # Charge les stats locales immédiatement (sans attendre le 1er clic).
+        QTimer.singleShot(200, self.refresh)
+
     def refresh(self):
         if self._worker and self._worker.isRunning():
             return
@@ -87,6 +90,13 @@ class StatsView(QWidget):
 
     def _on_data(self, rows: list):
         self.refresh_btn.setEnabled(True)
+
+        if not rows:
+            self.status.setText(
+                "Aucun compte trouvé. Ajoutez et liez des comptes dans l'onglet Comptes. "
+                "Si des comptes existent, vérifiez les logs pour l'erreur de collecte.")
+            return
+
         t = stats_mod.totals(rows)
         self.m_accounts._value_label.setText(str(t["accounts"]))
         self.m_linked._value_label.setText(str(t["linked"]))
@@ -116,9 +126,7 @@ class StatsView(QWidget):
 
         any_remote = any(s.remote_videos is not None or s.remote_views is not None
                          for s in rows)
-        if not rows:
-            self.status.setText("Aucun compte. Ajoutez et liez des comptes.")
-        elif not any_remote and self.remote_chk.isChecked():
+        if not any_remote and self.remote_chk.isChecked():
             self.status.setText(
                 "Stats distantes indisponibles (API non autorisée ou sandbox) — "
                 "stats locales affichées.")

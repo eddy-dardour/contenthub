@@ -10,6 +10,7 @@ En mode SIMULATION, la vidéo est copiée dans contenthub_data/simulated_posts/.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import logging
 from pathlib import Path
@@ -21,9 +22,81 @@ from . import config as cfg
 
 logger = logging.getLogger(__name__)
 
-# Catégorie 24 = « Entertainment » (valeur sûre et universelle).
+# Catégorie 24 = Entertainment — polyvalent, évite les mauvaises surprises algo.
 DEFAULT_CATEGORY_ID = "24"
+# Langue par défaut des métadonnées (snippet.defaultLanguage).
+DEFAULT_LANGUAGE = "en"
 CHUNK = 8 * 1024 * 1024  # 8 Mo par requête PUT
+
+# Mots courts à ignorer lors de l'extraction de tags depuis le titre.
+_STOPWORDS = {
+    "le", "la", "les", "de", "du", "des", "un", "une", "en", "et", "à",
+    "au", "aux", "il", "elle", "on", "ce", "qui", "que", "si", "ou",
+    "the", "a", "an", "of", "in", "is", "to", "it", "for", "on", "at",
+}
+
+
+def _extract_tags(title: str, caption: str) -> list[str]:
+    """Génère 5-8 tags SEO depuis le titre + hashtags présents dans la légende.
+
+    Ordre de priorité : hashtags explicites → mots clés du titre → fallback Shorts.
+    YouTube ignore les tags >500 chars total et >8 peu ciblés.
+    """
+    tags: list[str] = []
+
+    # 1. Hashtags déjà écrits dans la légende (#mot).
+    for m in re.findall(r"#(\w+)", caption):
+        tag = m.lower()
+        if tag not in ("shorts", "short") and tag not in tags:
+            tags.append(tag)
+        if len(tags) >= 5:
+            break
+
+    # 2. Mots significatifs du titre (≥4 chars, hors stopwords).
+    for word in re.findall(r"\b[a-zA-ZÀ-ÿ]{4,}\b", title):
+        w = word.lower()
+        if w not in _STOPWORDS and w not in tags:
+            tags.append(w)
+        if len(tags) >= 7:
+            break
+
+    # 3. Tag #Shorts en dernier — signal de classement Short obligatoire.
+    tags.append("shorts")
+    return tags[:8]
+
+
+def _build_fields(caption: str) -> tuple[str, str, list[str]]:
+    """Retourne (title, description, tags) optimisés pour l'algorithme YouTube.
+
+    Règles appliquées :
+    - Titre ≤ 60 chars (affichage mobile complet) avec mot-clé en tête.
+    - Description : hook visible avant "Show More" (2 premières lignes)
+      puis corps complet, puis hashtags en bas (#Shorts + niche).
+    - Tags : 5-8 tags ciblés extraits du contenu.
+    """
+    caption = (caption or "").strip() or "Story"
+    lines = caption.split("\n")
+    first_line = lines[0].strip()
+
+    # Titre : 60 chars max pour affichage mobile sans troncature.
+    title = (first_line[:57] + "…") if len(first_line) > 60 else first_line
+
+    # Hashtags à placer en fin de description (visibles, indexés).
+    inline = [m for m in re.findall(r"#\w+", caption) if m.lower() not in ("#shorts",)]
+    footer_tags = " ".join(inline[:4]) + " #Shorts" if inline else "#Shorts"
+
+    # Corps : hook (1re ligne en gras via NBSP trick non dispo API, on la garde brute),
+    # puis reste de la légende épuré, puis hashtags footer.
+    body_lines = [l for l in lines[1:] if l.strip()] if len(lines) > 1 else []
+    body = "\n".join(body_lines).strip()
+
+    if body:
+        description = f"{first_line}\n\n{body}\n\n{footer_tags}"
+    else:
+        description = f"{first_line}\n\n{footer_tags}"
+
+    tags = _extract_tags(title, caption)
+    return title, description[:4900], tags
 
 
 class Uploader:
@@ -34,30 +107,15 @@ class Uploader:
 
     # ── Métadonnées ─────────────────────────────────────────────────────
 
-    @staticmethod
-    def _split_caption(caption: str) -> tuple[str, str]:
-        """Sépare titre (1re ligne) et description (reste) d'une légende.
-
-        YouTube impose un titre <= 100 caractères. On garde la 1re ligne comme
-        titre (tronquée) et l'ensemble comme description. On suffixe #Shorts pour
-        renforcer le classement en Short.
-        """
-        caption = (caption or "").strip() or "Story"
-        first = caption.split("\n", 1)[0].strip()
-        title = (first[:97] + "…") if len(first) > 100 else first
-        if "#shorts" not in caption.lower():
-            description = f"{caption}\n\n#Shorts"
-        else:
-            description = caption
-        return title, description[:4900]
-
     def _metadata(self, caption: str) -> dict:
-        title, description = self._split_caption(caption)
+        title, description, tags = _build_fields(caption)
         return {
             "snippet": {
                 "title": title,
                 "description": description,
+                "tags": tags,
                 "categoryId": DEFAULT_CATEGORY_ID,
+                "defaultLanguage": DEFAULT_LANGUAGE,
             },
             "status": {
                 "privacyStatus": self.privacy,

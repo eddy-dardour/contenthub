@@ -61,8 +61,18 @@ def collect(with_remote: bool = True) -> list[AccountStats]:
     out: list[AccountStats] = []
 
     for plugin in get_plugins().values():
-        for acc in plugin.list_accounts():
-            linked = plugin.is_account_linked(acc)
+        try:
+            accounts = plugin.list_accounts()
+        except Exception as e:
+            logger.error("list_accounts(%s) échoué : %s", plugin.id, e)
+            continue
+        for acc in accounts:
+            try:
+                linked = plugin.is_account_linked(acc)
+            except Exception as e:
+                logger.warning("is_account_linked(%s/%s) échoué : %s",
+                               plugin.id, acc.name, e)
+                linked = bool(acc.credentials)
             loc = local.get(acc.id, {})
             st = AccountStats(
                 account_id=acc.id,
@@ -83,7 +93,7 @@ def collect(with_remote: bool = True) -> list[AccountStats]:
                         st.remote_videos = remote.get("videos")
                         st.remote_views = remote.get("views")
                         st.remote_likes = remote.get("likes")
-                except Exception as e:  # API instable → on n'échoue jamais l'UI
+                except Exception as e:
                     logger.warning("fetch_stats(%s/%s) échoué : %s",
                                    plugin.id, acc.name, e)
                     st.remote_error = str(e)

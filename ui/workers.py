@@ -70,9 +70,11 @@ class StatsWorker(QThread):
         self.with_remote = with_remote
 
     def run(self):
+        import logging
         try:
             data = stats.collect(with_remote=self.with_remote)
-        except Exception:
+        except Exception as e:
+            logging.getLogger(__name__).error("StatsWorker.collect() échoué : %s", e, exc_info=True)
             data = []
         self.finished_result.emit(data)
 
