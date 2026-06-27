@@ -20,6 +20,7 @@ from . import generator
 from . import content as content_mod
 from .catalog import ContentType
 from .registry import get_plugins
+from .accounts import AccountRepository
 from .publisher import Publisher
 
 logger = logging.getLogger(__name__)
@@ -34,15 +35,16 @@ def _emit(cb: Callable | None, event: str, data: dict):
 
 
 def eligible_accounts(content_type: ContentType) -> dict[str, list]:
-    """Retourne {network_id: [comptes liés+actifs]} pour les plateformes épinglées."""
+    """Retourne {network_id: [comptes liés+actifs+non-cooldown]} pour les plateformes épinglées."""
     plugins = get_plugins()
+    repo = AccountRepository()
     result: dict[str, list] = {}
     for net_id in content_type.networks:
         plugin = plugins.get(net_id)
         if not plugin:
             continue
         accounts = [a for a in plugin.list_accounts(active_only=True)
-                    if plugin.is_account_linked(a)]
+                    if plugin.is_account_linked(a) and repo.can_post(a.id)]
         if accounts:
             result[net_id] = accounts
     return result
