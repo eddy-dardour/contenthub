@@ -155,18 +155,12 @@ class Publisher:
     def _filter_items_for_account(items, content_type_id: str | None):
         """Filtre les items selon le type assigné au compte.
 
-        Convention : le nom de fichier contient le gen_type (ex: 'drama_001_01.mp4').
-        Si aucun type assigné, retourne tous les items.
+        Les vidéos générées (001_01.mp4) ne portent pas de tag de type dans leur
+        nom — le générateur produit un seul type à la fois. On retourne donc tout
+        le contenu disponible ; le filtre par type de contenu est appliqué au niveau
+        de la campagne (génération ciblée), pas ici.
         """
-        if not content_type_id:
-            return items
-        from .catalog import get_type
-        ct = get_type(content_type_id)
-        if not ct:
-            return items
-        prefix = ct.gen_type
-        filtered = [i for i in items if prefix in i.key]
-        return filtered if filtered else items
+        return items
 
     # ── Circulation : 1 vidéo unique par compte ─────────────────────────
 

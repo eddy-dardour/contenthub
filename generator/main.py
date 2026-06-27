@@ -163,23 +163,30 @@ class TikTokAutoBot:
                 self.seen_titles.add(fp)
 
     def _reset_output(self):
-        # Ferme le handler fichier avant de supprimer le dossier (Windows : fichier verrouillé).
+        """Nettoie les fichiers temporaires (audio, subs) sans toucher aux vidéos.
+
+        Les vidéos finales (output/videos/*.mp4) sont conservées pour que
+        ContentHub puisse les distribuer après la génération. Seuls les fichiers
+        intermédiaires audio/subs et les vieux logs sont supprimés.
+        """
         root = logging.getLogger()
         for h in root.handlers[:]:
             if isinstance(h, logging.handlers.RotatingFileHandler):
                 h.close()
                 root.removeHandler(h)
 
-        output_dir = Path(self.config.OUTPUT_DIR)
-        if output_dir.exists():
-            shutil.rmtree(output_dir)
+        # Nettoie UNIQUEMENT audio et subs — PAS videos/ ni le dossier racine.
+        for tmp_dir in [self.config.AUDIO_DIR, self.config.SUBS_DIR]:
+            tmp = Path(tmp_dir)
+            if tmp.exists():
+                shutil.rmtree(tmp)
 
         for d in [self.config.OUTPUT_DIR, self.config.AUDIO_DIR,
                   self.config.VIDEO_DIR, self.config.SUBS_DIR, self.config.LOG_DIR]:
             Path(d).mkdir(parents=True, exist_ok=True)
 
         _setup_logging(self.config.LOG_LEVEL, self.config.LOG_DIR / 'bot.log')
-        logger.info('Dossier output réinitialisé.')
+        logger.info('Fichiers temporaires réinitialisés (vidéos conservées).')
 
     def _hashtag_key(self, item: dict) -> str:
         if item.get('content_strategy') == 'facts' \

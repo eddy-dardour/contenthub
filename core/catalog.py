@@ -49,15 +49,31 @@ class ContentType:
 # voix off sur gameplay), épinglée à TikTok + YouTube + Facebook.
 CATALOG: tuple[ContentType, ...] = (
     ContentType(
-        id="tts_minecraft",
-        label="TTS Minecraft",
-        description="Histoire Reddit en voix off sur gameplay vertical (TTS + sous-titres).",
+        id="tts_drama",
+        label="TTS Drama",
+        description="Histoire drama Reddit en voix off sur gameplay Minecraft vertical.",
+        icon="🎭",
+        generator_kind=GEN_MANUAL,
+        gen_type="drama",
+        networks=("tiktok", "youtube", "facebook"),
+    ),
+    ContentType(
+        id="tts_facts",
+        label="TTS Facts",
+        description="Fait insolite Reddit en voix off sur gameplay Minecraft vertical.",
+        icon="🧠",
+        generator_kind=GEN_MANUAL,
+        gen_type="facts",
+        networks=("tiktok", "youtube", "facebook"),
+    ),
+    ContentType(
+        id="tts_rotate",
+        label="TTS Mix (Drama + Facts)",
+        description="Alterne drama et facts automatiquement selon la disponibilité.",
         icon="⛏",
         generator_kind=GEN_MANUAL,
         gen_type="rotate",
         networks=("tiktok", "youtube", "facebook"),
-        # X/Twitter intentionnellement exclu (API payante, intégration retirée).
-
     ),
 )
 
